@@ -29,7 +29,7 @@ public ref struct SymIter
     //      uint16 kind;
     //      uint8 record_data[record_len - 2];
     //
-    public bool Next(out SymKind kind, out Span<byte> recordBytes)
+    public bool Next(out SymKind kind, out ReadOnlySpan<byte> recordBytes)
     {
         kind = (SymKind)0;
         recordBytes = Span<byte>.Empty;

@@ -1,12 +1,14 @@
 ﻿
+using System.Runtime.InteropServices;
+
 namespace Pdb;
 
 public ref struct Bytes {
-    public Bytes(Span<byte> data) {
+    public Bytes(ReadOnlySpan<byte> data) {
         _data = data;
     }
 
-    public Span<byte> _data;
+    public ReadOnlySpan<byte> _data;
 
     public bool IsEmpty {
         get { return _data.IsEmpty; }
@@ -20,11 +22,11 @@ public ref struct Bytes {
         return _data.Length >= n;
     }
 
-    public Span<byte> ReadN(int n) {
+    public ReadOnlySpan<byte> ReadN(int n) {
         if (_data.Length < n) {
             throw new Exception("Not enough data");
         }
-        Span<byte> s = _data.Slice(0, n);
+        ReadOnlySpan<byte> s = _data.Slice(0, n);
         _data = _data.Slice(n);
         return s;
     }
@@ -94,6 +96,21 @@ public ref struct Bytes {
         throw new Exception("Did not find NUL terminator for string");
     }
 
+    public T ReadT<T>()
+        where T: struct
+    {
+        int n = System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
+        ReadOnlySpan<byte> tbytes = ReadN(n);
+        return MemoryMarshal.AsRef<T>(tbytes);
+    }
+
+    public void Skip(int n) {
+        if (_data.Length < n) {
+            throw new Exception("Not enough data");
+        }
+        _data = _data.Slice(n);
+    }
+
     // Get* methods read at an absolute index and do not move the read cursor
 
     void NeedsBytes(int n) {
@@ -102,7 +119,7 @@ public ref struct Bytes {
         }
     }
 
-    public Span<byte> GetN(int offset, int n) {
+    public ReadOnlySpan<byte> GetN(int offset, int n) {
         if (offset > _data.Length) {
             throw new Exception("Not enough data");
         }

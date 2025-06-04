@@ -36,7 +36,7 @@ static class MsfUtils {
         return value & mask;
     }
 
-    internal static bool SpanEq(in Span<byte> a, in Span<byte> b) {
+    internal static bool SpanEq(in ReadOnlySpan<byte> a, in ReadOnlySpan<byte> b) {
         if (a.Length != b.Length) {
             return false;
         }

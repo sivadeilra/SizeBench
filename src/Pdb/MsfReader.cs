@@ -1,7 +1,3 @@
-using System;
-using System.Diagnostics;
-using System.IO;
-
 namespace Pdb;
 
 public sealed class MsfReader : IMsfReader, IDisposable
@@ -82,7 +78,7 @@ public sealed class MsfReader : IMsfReader, IDisposable
 
         // fh = "file header"
         var fh = new Bytes(new Span<byte>(fileHeader));
-        Span<byte> signature = fh.ReadN(32);
+        ReadOnlySpan<byte> signature = fh.ReadN(32);
 
         if (!MsfUtils.SpanEq(signature, new Span<byte>(MsfDefs.FileSignature))) {
             throw new Exception("File signature is wrong (is not an MSF file)");
@@ -158,7 +154,7 @@ public sealed class MsfReader : IMsfReader, IDisposable
         _allStreamPages = allStreamPages;
     }
 
-    static byte[] ReadStreamDirectory(System.IO.Stream file, int pageSizeShift, in Span<byte> pageMapBytes, int streamDirSize) {
+    static byte[] ReadStreamDirectory(System.IO.Stream file, int pageSizeShift, in ReadOnlySpan<byte> pageMapBytes, int streamDirSize) {
         if (streamDirSize % 4 != 0) {
             throw new Exception("Stream directory size is invalid (is not a multiple of 4)");
         }
@@ -208,5 +204,4 @@ public sealed class MsfReader : IMsfReader, IDisposable
 
         return streamDirBytes;
     }
-
 }

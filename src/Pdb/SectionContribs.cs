@@ -7,39 +7,40 @@ namespace Pdb;
 /// Contains the Section Contributions table
 /// </summary>
 public class SectionContribs {
-    public SectionContribEntry2[] Contribs;
+    public SectionContribEntry[] Contribs;
 
     const uint SECTION_CONTRIBUTIONS_SUBSTREAM_VER60 = 0xeffe0000 + 19970605;
 
     internal SectionContribs(byte[] contribsBytes) {
+        this.Contribs = Array.Empty<SectionContribEntry>();
+
         Bytes b = new Bytes(contribsBytes);
 
         // The section begins with a uint32 that specifies the format of the data.
         if (b.Length < 4) {
-            this.Contribs = Array.Empty<SectionContribEntry2>();
             return;
         }
 
         uint sectionContribsVersion = b.ReadUInt32();
         if (sectionContribsVersion != SECTION_CONTRIBUTIONS_SUBSTREAM_VER60) {
             // This version is not supported.
-            this.Contribs = Array.Empty<SectionContribEntry2>();
             return;
         }
 
-        int numEntries = b.Length / SectionContribEntry.SizeOf;
+        ReadOnlySpan<RawSectionContribEntry> rawContribs = MemoryMarshal.Cast<byte, RawSectionContribEntry>(b._data);
+        int numEntries = rawContribs.Length;
 
-        SectionContribEntry2[] contribs = new SectionContribEntry2[numEntries];
+        SectionContribEntry[] contribs = new SectionContribEntry[numEntries];
         for (int i = 0; i < contribs.Length; ++i) {
-            var entry = new SectionContribEntry(ref b);
-            contribs[i].Base = entry;
+            RawSectionContribEntry entry = rawContribs[i];
+            contribs[i] = new SectionContribEntry(ref entry);
         }
 
         this.Contribs = contribs;
     }
 
-    public (bool, SectionContribEntry2) FindForRva(int offset) {
-        SectionContribEntry2[] contribs = this.Contribs;
+    public (bool, SectionContribEntry) FindForRva(int offset) {
+        SectionContribEntry[] contribs = this.Contribs;
         int lo = 0;
         int hi = contribs.Length;
 
@@ -47,14 +48,14 @@ public class SectionContribs {
             int mid = lo + (hi - lo) / 2;
             ref var c = ref contribs[mid];
 
-            if (offset < c.Base.offset) {
+            if (offset < c.offset) {
                 // The one we're searching for is below the candidate and cannot overlap it.
                 hi = mid;
                 continue;
             }
 
-            int offsetWithinC = offset - c.Base.offset;
-            if (offsetWithinC >= c.Base.size) {
+            int offsetWithinC = offset - c.offset;
+            if (offsetWithinC >= c.size) {
                 // The one we're searching for does not overlap the candidate and is higher than it.
                 lo = mid + 1;
                 continue;
@@ -64,25 +65,31 @@ public class SectionContribs {
             return (true, c);
         }
 
-        return (false, default(SectionContribEntry2));
+        return (false, default(SectionContribEntry));
     }
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct SectionContribEntry2 {
+public struct RawSectionContribEntry2 {
     public const int SizeOf = 32;
 
-    public SectionContribEntry Base;
+    public RawSectionContribEntry Base;
     public uint coff_section;
 
-    public SectionContribEntry2(ref Bytes bytes) {
+#if todo
+    public RawSectionContribEntry2(ref Bytes bytes) {
         this.Base = new SectionContribEntry(ref bytes);
         this.coff_section = bytes.ReadUInt32();
     }
+#endif
 }
 
+/// <summary>
+/// The on-disk layout of the entries in the Section Contributions Table
+/// </summary>
 [StructLayout(LayoutKind.Sequential)]
-public struct SectionContribEntry {
+public struct RawSectionContribEntry
+{
     public const int SizeOf = 28;
 
     /// The section index
@@ -100,27 +107,35 @@ public struct SectionContribEntry {
     // public ushort padding2;
     public uint data_crc;
     public uint reloc_crc;
+}
 
-    public SectionContribEntry(ref Bytes bytes) {
-        // Give the optimizer a chance to combine all the range checks below
-        if (bytes.Length < SectionContribEntry.SizeOf) {
-            throw new ArgumentException("input data is too short for SectionContribEntry");
-        }
+/// <summary>
+/// The in-memory layout of the entries of the Section Contributions Table.
+/// </summary>
+/// <remarks>
+/// We use a different layout for the in-memory form and the on-disk form because the on-disk
+/// form wastes memory due to padding. Also, we simply do not use the `data_crc` and `reloc_crc`
+/// fields, so we don't read them.
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+public struct SectionContribEntry {
+    /// The zero-based module index of the module containing this section contribution.
+    public ushort module_index;
 
-        this.section = bytes.ReadUInt16();
-        // this.padding1 = bytes.ReadUInt16();
-        bytes.ReadUInt16();
-        
-        this.offset = bytes.ReadInt32();
-        this.size = bytes.ReadInt32();
-        this.characteristics = bytes.ReadUInt32();
-        this.module_index = bytes.ReadUInt16();
+    /// The section index
+    public ushort section;
 
-        // this.padding2 = bytes.ReadUInt16();
-        bytes.ReadUInt16();
+    public int offset;
+    public int size;
+    public uint characteristics;
 
-        this.data_crc = bytes.ReadUInt32();
-        this.reloc_crc = bytes.ReadUInt32();
+    public SectionContribEntry(ref RawSectionContribEntry raw)
+    {
+        this.module_index = raw.module_index;
+        this.section = raw.section;
+        this.offset = raw.offset;
+        this.size = raw.size;
+        this.characteristics = raw.characteristics;
     }
 }
 

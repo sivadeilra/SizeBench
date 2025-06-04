@@ -1,17 +1,20 @@
-﻿using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Reflection;
-using System.Reflection.PortableExecutable;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Text;
-using Dia2Lib;
+﻿using Dia2Lib;
 using Pdb;
+using Pdb.CodeView;
 using SizeBench.AnalysisEngine.COMInterop;
 using SizeBench.AnalysisEngine.PE;
 using SizeBench.AnalysisEngine.Symbols;
 using SizeBench.Logging;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text;
+using Windows.Gaming.Input;
 
 namespace SizeBench.AnalysisEngine.DIAInterop;
 
@@ -2010,6 +2013,8 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
                     rvasOfLabels.Add(labelRVA);
                 }
             });
+
+            FindAllLabelsNew();
         }
 
         using (var findCanonicalNamesLog = logger.StartTaskLog("Finding canonical names for foldable RVAs"))
@@ -2018,6 +2023,91 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         }
 
         this.DataCache.InitializeRVARanges(rvaToSymIndexIDs, rvasOfLabels);
+    }
+
+    struct LabelEntry
+    {
+        public uint offset;
+        public ushort segment;
+    }
+
+    void FindAllLabelsNew()
+    {
+        // Scan all module symbols and find all S_LABEL32, S_BLOCK32, and S_*PROC32 records.
+        // Build a list of the RVAs of all of them.
+
+        // This contains segment:offset, packed as a single uint64 value.
+        // The offset is shifted left by 32 bits, so that it dominates sorting.
+        var labels = new List<ulong>();
+
+        static ulong Pack(OffsetSegment os) {
+            return (((ulong)os.segment) << 32) | ((ulong)os.offset);
+        }
+
+        int numModules = _pdb.NumModules;
+        for (int module = 0; module < numModules; ++module)
+        {
+            byte[] moduleSymbols = _pdb.GetModuleSymbols(module);
+
+            var iter = SymIter.ForModuleSymbols(moduleSymbols);
+            while (iter.Next(out var kind, out var recordBytes))
+            {
+                Bytes rd = new Bytes(recordBytes);
+
+                switch (kind) {
+                    case SymKind.S_LABEL32:
+                        {
+                            SymLabelHeader label = rd.ReadT<SymLabelHeader>();
+                            labels.Add(Pack(label.offsetSegment));
+                            break;
+                        }
+
+                        case SymKind.S_BLOCK32: {
+                            SymBlockHeader block = rd.ReadT<SymBlockHeader>();
+                            labels.Add(Pack(block.offset_segment));
+                            break;
+                        }
+
+                        case SymKind.S_LPROC32:
+                        case SymKind.S_GPROC32:
+                        {
+                            SymProcHeader proc = rd.ReadT<SymProcHeader>();
+                            labels.Add(Pack(proc.offset_segment));
+                            break;
+                        }
+
+                    default:
+                        break;
+                }
+            }
+        }
+
+        labels.Sort();
+
+        // de-dup
+        if (labels.Count != 0) {
+            int r = 1;
+            int w = 1;
+            ulong last = labels[0];
+            while (r < labels.Count) {
+                ulong label = labels[r];
+                if (label != last) {
+                    last = label;
+                    if (r != w) {
+                        labels[w] = label;
+                    }
+                    ++w;
+                }
+                ++r;
+            }
+
+            Debug.Assert(r == labels.Count);
+            if (w < r) {
+                labels.RemoveRange(w, r - w);
+            }
+        }
+
+        Console.WriteLine($"n = {labels.Count}");
     }
 
     #endregion

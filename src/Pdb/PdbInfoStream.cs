@@ -17,15 +17,15 @@ namespace Pdb;
         // Read the Named Streams Table.
 
         uint namesSize = b.ReadUInt32();
-        Span<byte> namesData = b.ReadN((int)namesSize);
+        ReadOnlySpan<byte> namesData = b.ReadN((int)namesSize);
         uint nameCount = b.ReadUInt32();
         uint namesHashSize = b.ReadUInt32();
 
         uint presentUInt32Count = b.ReadUInt32();
-        Span<byte> presentMask = b.ReadN((int)presentUInt32Count * 4);
+        ReadOnlySpan<byte> presentMask = b.ReadN((int)presentUInt32Count * 4);
 
         uint deletedUInt32Count = b.ReadUInt32();
-        Span<byte> deletedMask = b.ReadN((int)deletedUInt32Count * 4);
+        ReadOnlySpan<byte> deletedMask = b.ReadN((int)deletedUInt32Count * 4);
 
         // ignore the masks for now
 

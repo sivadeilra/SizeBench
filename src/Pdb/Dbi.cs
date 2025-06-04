@@ -1,8 +1,3 @@
-
-using System.IO;
-using System.Reflection;
-using System.Runtime.InteropServices;
-
 namespace Pdb;
 
 // This structure would be bit-blittable, if we had that capability.
@@ -68,9 +63,6 @@ public sealed class DbiStreamInfo {
     public DbiStreamHeader Header;
     public uint StreamSize;
 
-    // on-demand
-    ModuleInfo[]? _modules;
-
     public DbiStreamInfo(MsfReader msf) {
         var sr = msf.GetStreamReader(PdbDefs.DbiStream);
 
@@ -79,17 +71,12 @@ public sealed class DbiStreamInfo {
         sr.ReadAt(0, headerBuf);
         DbiStreamHeader header = new DbiStreamHeader(headerBuf);
 
-
         this.Header = header;
         this.StreamSize = (uint)sr.StreamSize;
     }
 
-    internal ModuleInfo[] GetModules(MsfReader msf) {
-        if (_modules != null) {
-            return _modules;
-        }
-
-        byte[] modulesBytes = new byte[this.Header.mod_info_size];
+    internal static ModuleInfo[] ReadModules(MsfReader msf, ref DbiStreamHeader dbiStreamHeader) {
+        byte[] modulesBytes = new byte[dbiStreamHeader.mod_info_size];
 
         var sr = msf.GetStreamReader(PdbDefs.DbiStream);
 
@@ -99,9 +86,7 @@ public sealed class DbiStreamInfo {
         // The Modules immediately follow the stream header.
         // Decode the module records.
 
-        var modules = ParseModules(modulesBytes);
-        _modules = modules;
-        return modules;
+        return ParseModules(modulesBytes);
     }
 
     static ModuleInfo[] ParseModules(byte[] modulesBytes) {

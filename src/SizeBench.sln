@@ -192,6 +192,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SizeBenchV2.AnalysisEngine.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pdb", "Pdb\Pdb.csproj", "{57194340-7709-0151-169C-6E6D682BD5F1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PdbTest", "PdbTest\PdbTest.csproj", "{835DBD18-F2FE-7C20-5F9F-CA6C4F2C1FC9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -328,6 +330,10 @@ Global
 		{57194340-7709-0151-169C-6E6D682BD5F1}.Debug|x64.Build.0 = Debug|x64
 		{57194340-7709-0151-169C-6E6D682BD5F1}.Release|x64.ActiveCfg = Release|x64
 		{57194340-7709-0151-169C-6E6D682BD5F1}.Release|x64.Build.0 = Release|x64
+		{835DBD18-F2FE-7C20-5F9F-CA6C4F2C1FC9}.Debug|x64.ActiveCfg = Debug|x64
+		{835DBD18-F2FE-7C20-5F9F-CA6C4F2C1FC9}.Debug|x64.Build.0 = Debug|x64
+		{835DBD18-F2FE-7C20-5F9F-CA6C4F2C1FC9}.Release|x64.ActiveCfg = Release|x64
+		{835DBD18-F2FE-7C20-5F9F-CA6C4F2C1FC9}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
