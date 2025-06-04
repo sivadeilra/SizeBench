@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Dia2Lib;
+using Pdb;
 using SizeBench.AnalysisEngine.COMInterop;
 using SizeBench.AnalysisEngine.PE;
 using SizeBench.AnalysisEngine.Symbols;
@@ -47,6 +48,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
     // Once we load DIA we never try to unload it, because it's very hard to deterministically collect all the COM objects before we unload the DLL.  That's why this is static.
     private static readonly LibraryModule _diaLibraryModule = LibraryModule.LoadModule(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", @"msdia140.dll"));
     private IDiaDataSource? _diaDataSource;
+    private Pdb.PdbReader _pdb;
     private Session? _session;
     private PEFile? _peFile;
     private SessionDataCache? _cache;
@@ -119,6 +121,11 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         }
     }
 
+    public PdbReader Pdb
+    {
+        get { return _pdb; }
+    }
+
     public static readonly Guid Dia140Clsid = new Guid("{E6756135-1E65-4D17-8576-610761398C3C}");
 
     #region Construction, opening, all the startup-y things
@@ -130,6 +137,8 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         this._affinitizedThreadId = Environment.CurrentManagedThreadId;
         this.SupportsCodeSymbols = session.SessionOptions.SymbolSourcesSupported.HasFlag(SymbolSourcesSupported.Code);
         this.SupportsDataSymbols = session.SessionOptions.SymbolSourcesSupported.HasFlag(SymbolSourcesSupported.DataSymbols);
+
+        this._pdb = PdbReader.Open(pdbPath);
 
         try
         {
@@ -158,6 +167,12 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
         this._globalScope = this._diaSession.globalScope;
         var machineType = this._globalScope.machineType;
+
+        var machineTypeDirect = this._pdb.MachineType;
+        if (machineType != machineTypeDirect)
+        {
+            throw new Exception("DIA and PdbReader disagree on machine type");
+        }
 
         // See http://msdn.microsoft.com/en-us/library/windows/desktop/ms680313(v=vs.85).aspx
         switch (machineType)
@@ -199,10 +214,22 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
                                                                  $"Binary guid={this.Session.PEFile.DebugSignature.PdbGuid}, PDB guid={this.DiaGlobalScope.guid}");
             }
 
+            if (this.Session.PEFile.DebugSignature.PdbGuid != this._pdb.Guid)
+            {
+                throw new BinaryAndPDBSignatureMismatchException($"Binary and PDB do not match debug signatures, they appear to be from different builds.  SizeBench requires that a binary and PDB match exactly." + Environment.NewLine +
+                                                                 $"Binary guid={this.Session.PEFile.DebugSignature.PdbGuid}, PDB guid={this._pdb.Guid}");
+            }
+
             if (this.Session.PEFile.DebugSignature.Age != this.DiaGlobalScope.age)
             {
                 throw new BinaryAndPDBSignatureMismatchException($"Binary and PDB do not match debug signatures, they appear to be from different builds.  SizeBench requires that a binary and PDB match exactly." + Environment.NewLine +
                                                                  $"Binary age={this.Session.PEFile.DebugSignature.Age}, PDB age={this.DiaGlobalScope.age}");
+            }
+
+            if (this.Session.PEFile.DebugSignature.Age != this._pdb.Age)
+            {
+                throw new BinaryAndPDBSignatureMismatchException($"Binary and PDB do not match debug signatures, they appear to be from different builds.  SizeBench requires that a binary and PDB match exactly." + Environment.NewLine +
+                                                                 $"Binary age={this.Session.PEFile.DebugSignature.Age}, PDB age={this._pdb.Age}");
             }
         }
 

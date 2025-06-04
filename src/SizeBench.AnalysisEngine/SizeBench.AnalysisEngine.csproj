@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Pdb\Pdb.csproj" />
     <ProjectReference Include="..\SizeBench.AsyncInfrastructure\SizeBench.AsyncInfrastructure.csproj" />
     <ProjectReference Include="..\SizeBench.Logging\SizeBench.Logging.csproj" />
   </ItemGroup>
