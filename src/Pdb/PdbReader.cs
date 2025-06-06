@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 namespace Pdb;
 
 public sealed class PdbReader : IDisposable {
-    readonly MsfReader _reader;
+    readonly MsfReader _msf;
 
     readonly PdbInfo _info;
 
@@ -32,7 +32,7 @@ public sealed class PdbReader : IDisposable {
     readonly ModuleSymbolsEntry[] _moduleSymbols;
 
     public void Dispose() {
-        _reader.Dispose();
+        _msf.Dispose();
     }
 
     public static PdbReader Open(string fileName) {
@@ -48,7 +48,7 @@ public sealed class PdbReader : IDisposable {
     PdbReader(MsfReader msf) {
         // Read the PDB Information Stream (stream 1). This stream is small and nearly always used.
 
-        var info = PdbInfoStream.ReadPdbInfo(msf);
+        var info = PdbInfoStream.Read(msf);
         DbiStreamInfo dbiStreamInfo = new DbiStreamInfo(msf);
 
         // The Modules table is important for many PDB queries and is reasonably small.
@@ -56,13 +56,13 @@ public sealed class PdbReader : IDisposable {
 
         this._modules = DbiStreamInfo.ReadModules(msf, ref dbiStreamInfo.Header);
         this._moduleSymbols = new ModuleSymbolsEntry[this._modules.Length];
-        this._reader = msf;
+        this._msf = msf;
         this._info = info;
         this._dbiStreamInfo = dbiStreamInfo;
     }
 
     public MsfReader Msf {
-        get { return this._reader; }
+        get { return this._msf; }
     }
 
     public Guid Guid {
@@ -102,6 +102,8 @@ public sealed class PdbReader : IDisposable {
         get { return _modules.Length; }
     }
 
+    #region Global Symbols
+
     byte[]? _globalSymbols;
 
     /// <summary>
@@ -130,6 +132,10 @@ public sealed class PdbReader : IDisposable {
         return sr.ReadStreamToArray();
     }
 
+    #endregion
+
+    #region Section Contributions
+
     SectionContribs? _sectionContribs;
 
     public SectionContribs GetSectionContribs() {
@@ -155,6 +161,8 @@ public sealed class PdbReader : IDisposable {
         _sectionContribs = sectionContribs;
         return sectionContribs;
     }
+
+    #endregion
 
     internal ModuleSymbolsEntry[] GetModuleSymbolsTable()
     {
@@ -221,10 +229,12 @@ public sealed class PdbReader : IDisposable {
             return _sectionMap;
         }
 
-        var sectionMap = SectionMap.Read(_reader, ref _dbiStreamInfo.Header);
+        var sectionMap = SectionMap.Read(_msf, ref _dbiStreamInfo.Header);
         _sectionMap = sectionMap;
         return sectionMap;
     }
+
+    #region Source Files
 
     SourceFiles? _sourceFiles;
 
@@ -244,6 +254,90 @@ public sealed class PdbReader : IDisposable {
             + (uint)_dbiStreamInfo.Header.section_contribution_size
             + (uint)_dbiStreamInfo.Header.section_map_size;
 
-        return SourceFiles.Read(_reader, sourceFilesOffset, _dbiStreamInfo.Header.source_info_size);
+        return SourceFiles.Read(_msf, sourceFilesOffset, _dbiStreamInfo.Header.source_info_size);
     }
+
+    #endregion
+
+    #region Optional Debug Headers
+
+    ushort[]? _optionalDebugStreams;
+
+    public ushort[] GetOptionalDebugStreams() {
+        if (_optionalDebugStreams != null) {
+            return _optionalDebugStreams;
+        }
+
+        ushort[] optionalDebugStreams = ReadOptionalDebugStreams();
+        _optionalDebugStreams = optionalDebugStreams;
+        return optionalDebugStreams;
+    }
+
+    private ushort[] ReadOptionalDebugStreams() {
+        int substreamSize = _dbiStreamInfo.Header.optional_dbg_header_size;
+        if (substreamSize == 0) {
+            return Array.Empty<ushort>();
+        }
+
+        int numEntries = substreamSize / sizeof(ushort);
+        ushort[] streams = new ushort[numEntries];
+        Span<byte> streamsAsBytes = MemoryMarshal.Cast<ushort, byte>(new Span<ushort>(streams));
+
+        var sr = _msf.GetStreamReader(PdbDefs.DbiStream);
+
+        uint substreamOffset = (uint)DbiStreamHeader.DbiStreamHeaderSize
+            + (uint)_dbiStreamInfo.Header.mod_info_size
+            + (uint)_dbiStreamInfo.Header.section_contribution_size
+            + (uint)_dbiStreamInfo.Header.section_map_size
+            + (uint)_dbiStreamInfo.Header.source_info_size
+            + (uint)_dbiStreamInfo.Header.type_server_map_size
+            + (uint)_dbiStreamInfo.Header.edit_and_continue_size;
+
+        sr.ReadAtExact(substreamOffset, streamsAsBytes);
+
+        return streams;
+    }
+
+    /// <summary>
+    /// Gets the stream index for an optional debug stream.
+    /// Returns -1 if this optional debug stream is not present.
+    /// </summary>
+    public int GetOptionalDebugStream(OptionalDebugStream kind) {
+        ushort[] streams = GetOptionalDebugStreams();
+
+        int i = (int)kind;
+        if (i < 0 || i >= streams.Length) {
+            return -1;
+        }
+
+        ushort stream = streams[i];
+        if (stream == MsfDefs.NilStreamIndex16) {
+            return -1;
+        }
+
+        return stream;
+    }
+
+    #endregion
+
+    #region Types Database
+
+    Types? _types;
+
+    public Types GetTypes() {
+        if (_types != null) {
+            return _types;
+        }
+
+        var types = ReadTypes();
+        _types = types;
+        return types;
+    }
+
+    private Types ReadTypes() {
+        var types = new Types(_msf, PdbDefs.TpiStream);
+        return types;
+    }
+
+    #endregion
 }

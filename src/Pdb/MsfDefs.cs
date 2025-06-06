@@ -1,6 +1,6 @@
 namespace Pdb;
 
-static class MsfDefs
+public static class MsfDefs
 {
     public const uint NilStreamSize = 0xffffffffu;
 

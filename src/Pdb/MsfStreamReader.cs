@@ -110,7 +110,8 @@ public class MsfStreamReader : IMsfStreamReader {
                 break;
             }
 
-            IOUtils.SeekRead(_msf._file, fileOffset, rest);
+            Span<byte> transferSlice = rest.Slice(0, (int)transferLen);
+            IOUtils.SeekRead(_msf._file, fileOffset, transferSlice);
 
             rest = rest.Slice((int)transferLen);
             totalBytesRead += (int)transferLen;

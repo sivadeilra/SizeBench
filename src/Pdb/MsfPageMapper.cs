@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace Pdb;
 
@@ -38,6 +39,7 @@ ref struct StreamPageMapper
     ///
     /// * if returned `Some`, then `transfer_len &lt;= bytes_wanted`
     /// * if returned `Some`, then `transfer_len &gt; 0`
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public (long fileOffset, uint transferLen) Map(uint pos, uint bytesWanted) {
         Debug.Assert(bytesWanted > 0);
 

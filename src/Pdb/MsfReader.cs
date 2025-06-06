@@ -72,6 +72,10 @@ public sealed class MsfReader : IMsfReader, IDisposable
 
     public static MsfReader Open(Stream file)
     {
+        return new MsfReader(file);
+    }
+
+    private MsfReader(Stream file) {
         // Read the file header and check its signature.
         byte[] fileHeader = new byte[MsfDefs.FileHeaderSize];
         IOUtils.SeekRead(file, 0, fileHeader);
@@ -134,24 +138,17 @@ public sealed class MsfReader : IMsfReader, IDisposable
         uint[] allStreamPages = new uint[nextPageStart];
         for (int i = 0; i < allStreamPages.Length; ++i) {
             uint streamPage = sd.ReadUInt32();
+            if (streamPage >= numPages) {
+                throw new Exception("Found stream page that is out of range");
+            }
             allStreamPages[i] = streamPage;
         }
 
-        return new MsfReader(
-            file: file,
-            streamSizes: streamSizes,
-            pageSizeShift: pageSizeShift,
-            allStreamPages: allStreamPages,
-            streamPageStarts: streamPageStarts
-        );
-    }
-
-    MsfReader(System.IO.Stream file, int pageSizeShift, uint[] streamSizes, int[] streamPageStarts, uint[] allStreamPages) {
-        _file = file;
-        _pageSizeShift = pageSizeShift;
-        _streamPageStarts = streamPageStarts;
-        _streamSizes = streamSizes;
-        _allStreamPages = allStreamPages;
+        this._file = file;
+        this._pageSizeShift = pageSizeShift;
+        this._streamPageStarts = streamPageStarts;
+        this._streamSizes = streamSizes;
+        this._allStreamPages = allStreamPages;
     }
 
     static byte[] ReadStreamDirectory(System.IO.Stream file, int pageSizeShift, in ReadOnlySpan<byte> pageMapBytes, int streamDirSize) {

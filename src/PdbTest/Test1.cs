@@ -120,5 +120,41 @@ public sealed class Test1 {
             Console.WriteLine();
         }
     }
+
+    [TestMethod]
+    public void DumpOptionalDebugStreams() {
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        ushort[] streams = pdb.GetOptionalDebugStreams();
+
+        for (int i = 0; i < streams.Length; ++i) {
+            ushort stream = streams[i];
+            if (stream != MsfDefs.NilStreamIndex16) {
+                OptionalDebugStream streamId = (OptionalDebugStream)i;
+                Console.WriteLine($"Stream: {stream} : {streamId}");
+            }
+        }
+
+        int sectionHeadersStream = pdb.GetOptionalDebugStream(OptionalDebugStream.section_header_data);
+        Console.WriteLine($"Section headers stream: {sectionHeadersStream}");
+    }
+
+    [TestMethod]
+    public void DumpTypes() {
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        var types = pdb.GetTypes();
+
+        TypesIter iter = types.Iter();
+
+        int ii = 0;
+        while (iter.Next(out var kind, out var recordData)) {
+            Console.WriteLine($"# {ii:4} : [{(ushort)kind:x04}] : {kind}");
+            ++ii;
+            if (ii == 20) {
+                break;
+            }
+        }
+    }
     
 }

@@ -1,8 +1,10 @@
 ﻿
 namespace Pdb;
-    internal static class PdbInfoStream {
 
-    public static PdbInfo ReadPdbInfo(MsfReader msf) {
+internal static class PdbInfoStream
+{
+    public static PdbInfo Read(MsfReader msf)
+    {
         var r = msf.GetStreamReader(PdbDefs.PdbiStream);
 
         byte[] bytes = r.ReadStreamToArray();
@@ -31,7 +33,8 @@ namespace Pdb;
 
         NamedStream[] namedStreams = new NamedStream[nameCount];
 
-        for (int i = 0; i < nameCount; ++i) {
+        for (int i = 0; i < nameCount; ++i)
+        {
             // Read each hash entry.
             uint key = b.ReadUInt32();
             uint value = b.ReadUInt32();
@@ -41,7 +44,8 @@ namespace Pdb;
             var nb = new Bytes(namesData.Slice((int)key)); // todo: bounds check
             string name = nb.ReadUtf8String();
 
-            namedStreams[i] = new NamedStream {
+            namedStreams[i] = new NamedStream
+            {
                 Name = name,
                 Stream = (int)value,
             };
@@ -52,20 +56,25 @@ namespace Pdb;
 
 }
 
-internal sealed class PdbInfo {
+internal sealed class PdbInfo
+{
     public Guid Guid;
     public uint Age;
     public NamedStream[] NamedStreams;
 
-    public PdbInfo(Guid guid, uint age, NamedStream[] namedStreams) {
+    public PdbInfo(Guid guid, uint age, NamedStream[] namedStreams)
+    {
         this.Guid = guid;
         this.Age = age;
         this.NamedStreams = namedStreams;
     }
 
-    public int FindNamedStream(string name) {
-        foreach (NamedStream ns in this.NamedStreams) {
-            if (ns.Name == name) {
+    public int FindNamedStream(string name)
+    {
+        foreach (NamedStream ns in this.NamedStreams)
+        {
+            if (ns.Name == name)
+            {
                 return ns.Stream;
             }
         }
@@ -74,7 +83,8 @@ internal sealed class PdbInfo {
     }
 }
 
-internal struct NamedStream {
+internal struct NamedStream
+{
     public string Name;
     public int Stream;
 }
