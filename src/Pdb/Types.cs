@@ -23,7 +23,8 @@ public sealed class Types
 
     readonly IndexOffsetEntry[] _indexOffsets;
 
-    internal Types(MsfReader msf, int stream) {
+    internal Types(MsfReader msf, int stream)
+    {
         var sr = msf.GetStreamReader(PdbDefs.TpiStream);
 
         // Read the header.
@@ -41,17 +42,21 @@ public sealed class Types
 
         // If the type stream contains an index offset table, then read it.
         IndexOffsetEntry[] indexOffsets;
-        if (header.index_offset_buffer_length != 0 && header.hash_stream_index != MsfDefs.NilStreamIndex16) {
+        if (header.index_offset_buffer_length != 0 && header.hash_stream_index != MsfDefs.NilStreamIndex16)
+        {
             var hashSr = msf.GetStreamReader(header.hash_stream_index);
             int numIndexOffsets = (int)(header.index_offset_buffer_length / 8); // 8 = sizeof(IndexOffsetEntry)
             indexOffsets = new IndexOffsetEntry[numIndexOffsets];
             Span<byte> indexOffsetsBytes = MemoryMarshal.AsBytes(new Span<IndexOffsetEntry>(indexOffsets));
             hashSr.ReadAtExact(header.index_offset_buffer_offset, indexOffsetsBytes);
-        } else {
+        }
+        else
+        {
             // The stream does not contain an index offset table.
             // Add a single entry.
             indexOffsets = new IndexOffsetEntry[1];
-            indexOffsets[0] = new IndexOffsetEntry {
+            indexOffsets[0] = new IndexOffsetEntry
+            {
                 typeIndex = header.type_index_begin,
                 streamOffset = 0
             };
@@ -62,23 +67,28 @@ public sealed class Types
     public uint TypeIndexBegin { get { return _header.type_index_begin; } }
     public uint TypeIndexEnd { get { return _header.type_index_end; } }
 
-    public TypesIter Iter() {
+    public TypesIter Iter()
+    {
         return new TypesIter(_data);
     }
 
-    public bool IsPrimitiveType(uint typeIndex) {
+    public bool IsPrimitiveType(uint typeIndex)
+    {
         return typeIndex < _header.type_index_begin;
     }
 
-    public bool FindTypeSearchStart(uint typeIndex, out int byteOffset, out int numRecordsToSkip) {
-        if (typeIndex < _header.type_index_begin) {
+    public bool FindTypeSearchStart(uint typeIndex, out int byteOffset, out int numRecordsToSkip)
+    {
+        if (typeIndex < _header.type_index_begin)
+        {
             byteOffset = 0;
             numRecordsToSkip = 0;
             return false;
         }
 
         var offsets = _indexOffsets;
-        if (offsets.Length == 0) {
+        if (offsets.Length == 0)
+        {
             byteOffset = 0;
             numRecordsToSkip = 0;
             return false;
@@ -90,18 +100,21 @@ public sealed class Types
         int bestNumRecordsToSkip = (int)(typeIndex - _header.type_index_begin);
         int bestByteOffset = 0;
 
-        while (lo < hi) {
+        while (lo < hi)
+        {
             int mid = lo + (hi - lo) / 2;
             ref var m = ref offsets[mid];
 
             // Desired record is below the current range.
-            if (typeIndex < m.typeIndex) {
+            if (typeIndex < m.typeIndex)
+            {
                 hi = mid;
                 continue;
             }
 
             // An exact hit should be rare.
-            if (typeIndex == m.typeIndex) {
+            if (typeIndex == m.typeIndex)
+            {
                 byteOffset = (int)m.streamOffset;
                 numRecordsToSkip = 0;
                 return true;
@@ -109,7 +122,8 @@ public sealed class Types
 
             // If we use this entry, how many records would we need to skip?
             int thisNumSkip = (int)(typeIndex - _header.type_index_begin);
-            if (thisNumSkip < bestNumRecordsToSkip) {
+            if (thisNumSkip < bestNumRecordsToSkip)
+            {
                 // This is closer.
                 bestNumRecordsToSkip = thisNumSkip;
                 bestByteOffset = (int)m.streamOffset;
@@ -122,20 +136,58 @@ public sealed class Types
         byteOffset = bestByteOffset;
         return true;
     }
+
+    public bool GetTypeRecord(uint typeIndex, out Leaf kind, out ReadOnlySpan<byte> recordData)
+    {
+        if (!FindTypeSearchStart(typeIndex, out var byteOffset, out var numRecordsToSkip))
+        {
+            kind = default;
+            recordData = default;
+            return false;
+        }
+
+        ReadOnlySpan<uint> startingSpan = new ReadOnlySpan<uint>(this._data).Slice(byteOffset / 4);
+
+        TypesIter iter = new TypesIter(startingSpan);
+
+        while (numRecordsToSkip > 0)
+        {
+            if (!iter.Next(out var _, out var _))
+            {
+                kind = default;
+                recordData = default;
+                return false;
+            }
+        }
+
+        return iter.Next(out kind, out recordData);
+    }
 }
 
-public ref struct TypesIter {
-    Span<uint> _data;
+/// <summary>
+/// Sequentially scans a buffer containing type records and iterates the type records.
+/// </summary>
+/// <remarks>
+/// This function does not parse the type records. All it does is locate their boundaries
+/// within the given buffer and iterate them. The caller will need to switch on the record
+/// kind and decode each record.
+/// </remarks>
+public ref struct TypesIter
+{
+    ReadOnlySpan<uint> _data;
 
-    internal TypesIter(Span<uint> data) {
+    internal TypesIter(ReadOnlySpan<uint> data)
+    {
         _data = data;
     }
 
-    public bool Next(out Leaf kind, out ReadOnlySpan<byte> recordData) {
+    public bool Next(out Leaf kind, out ReadOnlySpan<byte> recordData)
+    {
         kind = (Leaf)0;
         recordData = default;
 
-        if (_data.IsEmpty) {
+        if (_data.IsEmpty)
+        {
             return false;
         }
 
@@ -144,18 +196,20 @@ public ref struct TypesIter {
 
         // The length includes the 'kind' field, so it must be large enough
         // to cover at least the kind. Check that now and adjust len.
-        if (payloadLen < 2) {
+        if (payloadLen < 2)
+        {
             return false;
         }
         payloadLen -= 2;
 
         // Check that we have enough bytes left to cover the record payload.
-        Span<byte> restBytes = MemoryMarshal.Cast<uint, byte>(_data.Slice(1));
-        if (payloadLen > restBytes.Length) {
+        ReadOnlySpan<byte> restBytes = MemoryMarshal.Cast<uint, byte>(_data.Slice(1));
+        if (payloadLen > restBytes.Length)
+        {
             // TODO: report error?
             return false;
         }
-        
+
         kind = (Leaf)(ushort)(word0 >> 16);
         recordData = restBytes.Slice(0, payloadLen);
 
@@ -172,20 +226,10 @@ public ref struct TypesIter {
     }
 }
 
-public ref struct FieldIter {
-    Span<uint> _data;
-
-    public FieldIter(Span<uint> data) {
-        _data = data;
-    }
-
-    public bool Next() {
-    }
-}
-
 /// The header of the TPI stream.
 [StructLayout(LayoutKind.Sequential, Size = 56)]
-internal struct TypeStreamHeader {
+internal struct TypeStreamHeader
+{
     public uint version;
     public uint header_size;
     public uint type_index_begin;
@@ -216,7 +260,8 @@ internal struct TypeStreamHeader {
 }
 
 [StructLayout(LayoutKind.Sequential)]
-struct IndexOffsetEntry {
+struct IndexOffsetEntry
+{
     public uint typeIndex;
     public uint streamOffset;
 }

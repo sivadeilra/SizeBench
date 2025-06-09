@@ -1,11 +1,14 @@
+using Pdb.CodeView;
 using System;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Pdb;
 
-public sealed class PdbReader : IDisposable {
+public sealed class PdbReader : IDisposable
+{
     readonly MsfReader _msf;
 
     readonly PdbInfo _info;
@@ -31,21 +34,25 @@ public sealed class PdbReader : IDisposable {
     /// </summary>
     readonly ModuleSymbolsEntry[] _moduleSymbols;
 
-    public void Dispose() {
+    public void Dispose()
+    {
         _msf.Dispose();
     }
 
-    public static PdbReader Open(string fileName) {
+    public static PdbReader Open(string fileName)
+    {
         FileStream f = File.OpenRead(fileName);
         return Open(f);
     }
 
-    public static PdbReader Open(Stream stream) {
+    public static PdbReader Open(Stream stream)
+    {
         var msf = MsfReader.Open(stream);
         return new PdbReader(msf);
     }
 
-    PdbReader(MsfReader msf) {
+    PdbReader(MsfReader msf)
+    {
         // Read the PDB Information Stream (stream 1). This stream is small and nearly always used.
 
         var info = PdbInfoStream.Read(msf);
@@ -61,15 +68,18 @@ public sealed class PdbReader : IDisposable {
         this._dbiStreamInfo = dbiStreamInfo;
     }
 
-    public MsfReader Msf {
+    public MsfReader Msf
+    {
         get { return this._msf; }
     }
 
-    public Guid Guid {
+    public Guid Guid
+    {
         get { return _info.Guid; }
     }
 
-    public uint Age {
+    public uint Age
+    {
         get { return _info.Age; }
     }
 
@@ -85,15 +95,18 @@ public sealed class PdbReader : IDisposable {
     /// Finds a named stream with the given name and returns the stream index.
     /// If there is no stream with the given name, returns -1.
     /// </summary>
-    public int FindNamedStream(string name) {
+    public int FindNamedStream(string name)
+    {
         return _info.FindNamedStream(name);
     }
 
-    public DbiStreamInfo GetDbiStreamInfo() {
+    public DbiStreamInfo GetDbiStreamInfo()
+    {
         return _dbiStreamInfo;
     }
 
-    public ModuleInfo[] GetModules() {
+    public ModuleInfo[] GetModules()
+    {
         return _modules;
     }
 
@@ -109,8 +122,10 @@ public sealed class PdbReader : IDisposable {
     /// <summary>
     /// Gets access to the Global Symbol Stream (GSS). The GSS is loaded on demand and cached.
     /// </summary>
-    public byte[] GetGlobalSymbols() {
-        if (_globalSymbols != null) {
+    public byte[] GetGlobalSymbols()
+    {
+        if (_globalSymbols != null)
+        {
             return _globalSymbols;
         }
 
@@ -122,9 +137,11 @@ public sealed class PdbReader : IDisposable {
     /// <summary>
     /// Reads the Global Symbol Stream (GSS) from disk. This is uncached.
     /// </summary>
-    private byte[] ReadGlobalSymbols() {
+    private byte[] ReadGlobalSymbols()
+    {
         var dbi = GetDbiStreamInfo();
-        if (dbi.Header.GlobalSymbolStream == MsfDefs.NilStreamIndex16) {
+        if (dbi.Header.GlobalSymbolStream == MsfDefs.NilStreamIndex16)
+        {
             return Array.Empty<byte>();
         }
 
@@ -138,8 +155,10 @@ public sealed class PdbReader : IDisposable {
 
     SectionContribs? _sectionContribs;
 
-    public SectionContribs GetSectionContribs() {
-        if (_sectionContribs != null) {
+    public SectionContribs GetSectionContribs()
+    {
+        if (_sectionContribs != null)
+        {
             return _sectionContribs;
         }
 
@@ -147,9 +166,12 @@ public sealed class PdbReader : IDisposable {
 
         byte[] sectionContribsBytes;
 
-        if (dbi.Header.section_contribution_size == 0) {
+        if (dbi.Header.section_contribution_size == 0)
+        {
             sectionContribsBytes = Array.Empty<byte>();
-        } else {
+        }
+        else
+        {
             sectionContribsBytes = new byte[dbi.Header.section_contribution_size];
             int sectionContribsOffset = DbiStreamHeader.DbiStreamHeaderSize + dbi.Header.mod_info_size;
             var sr = Msf.GetStreamReader(PdbDefs.DbiStream);
@@ -224,8 +246,10 @@ public sealed class PdbReader : IDisposable {
     /// <summary>
     /// Gets the SectionMap. This is parsed on-demand and cached.
     /// </summary>
-    public SectionMap GetSectionMap() {
-        if (_sectionMap != null) {
+    public SectionMap GetSectionMap()
+    {
+        if (_sectionMap != null)
+        {
             return _sectionMap;
         }
 
@@ -238,8 +262,10 @@ public sealed class PdbReader : IDisposable {
 
     SourceFiles? _sourceFiles;
 
-    public SourceFiles GetSourceFiles() {
-        if (_sourceFiles != null) {
+    public SourceFiles GetSourceFiles()
+    {
+        if (_sourceFiles != null)
+        {
             return _sourceFiles;
         }
 
@@ -248,7 +274,8 @@ public sealed class PdbReader : IDisposable {
         return sourceFiles;
     }
 
-    private SourceFiles ReadSourceFiles() {
+    private SourceFiles ReadSourceFiles()
+    {
         uint sourceFilesOffset = (uint)DbiStreamHeader.DbiStreamHeaderSize
             + (uint)_dbiStreamInfo.Header.mod_info_size
             + (uint)_dbiStreamInfo.Header.section_contribution_size
@@ -263,8 +290,10 @@ public sealed class PdbReader : IDisposable {
 
     ushort[]? _optionalDebugStreams;
 
-    public ushort[] GetOptionalDebugStreams() {
-        if (_optionalDebugStreams != null) {
+    public ushort[] GetOptionalDebugStreams()
+    {
+        if (_optionalDebugStreams != null)
+        {
             return _optionalDebugStreams;
         }
 
@@ -273,9 +302,11 @@ public sealed class PdbReader : IDisposable {
         return optionalDebugStreams;
     }
 
-    private ushort[] ReadOptionalDebugStreams() {
+    private ushort[] ReadOptionalDebugStreams()
+    {
         int substreamSize = _dbiStreamInfo.Header.optional_dbg_header_size;
-        if (substreamSize == 0) {
+        if (substreamSize == 0)
+        {
             return Array.Empty<ushort>();
         }
 
@@ -302,16 +333,19 @@ public sealed class PdbReader : IDisposable {
     /// Gets the stream index for an optional debug stream.
     /// Returns -1 if this optional debug stream is not present.
     /// </summary>
-    public int GetOptionalDebugStream(OptionalDebugStream kind) {
+    public int GetOptionalDebugStream(OptionalDebugStream kind)
+    {
         ushort[] streams = GetOptionalDebugStreams();
 
         int i = (int)kind;
-        if (i < 0 || i >= streams.Length) {
+        if (i < 0 || i >= streams.Length)
+        {
             return -1;
         }
 
         ushort stream = streams[i];
-        if (stream == MsfDefs.NilStreamIndex16) {
+        if (stream == MsfDefs.NilStreamIndex16)
+        {
             return -1;
         }
 
@@ -324,8 +358,10 @@ public sealed class PdbReader : IDisposable {
 
     Types? _types;
 
-    public Types GetTypes() {
-        if (_types != null) {
+    public Types GetTypes()
+    {
+        if (_types != null)
+        {
             return _types;
         }
 
@@ -334,10 +370,77 @@ public sealed class PdbReader : IDisposable {
         return types;
     }
 
-    private Types ReadTypes() {
+    private Types ReadTypes()
+    {
         var types = new Types(_msf, PdbDefs.TpiStream);
         return types;
     }
 
     #endregion
+
+
+    #region Procedure Table
+
+    ProcTable? _procTable;
+
+    public ProcTable GetProcTable()
+    {
+        if (_procTable != null)
+        {
+            return _procTable;
+        }
+
+        var procTable = BuildProcTable();
+        _procTable = procTable;
+        return procTable;
+    }
+
+    private ProcTable BuildProcTable()
+    {
+
+        List<ProcEntry> entries = new List<ProcEntry>();
+
+        var modules = GetModules();
+
+        for (int module = 0; module < modules.Length; ++module)
+        {
+            byte[] moduleSymbols = GetModuleSymbols(module);
+            int originalLength = moduleSymbols.Length;
+
+            SymIter iter = SymIter.ForModuleSymbols(moduleSymbols);
+
+            while (true)
+            {
+                int recordOffset = originalLength - iter._data.Length;
+                if (!iter.Next(out var symbolKind, out var recordData))
+                {
+                    break;
+                }
+
+                switch (symbolKind)
+                {
+                    case SymKind.S_GPROC32:
+                    case SymKind.S_LPROC32:
+                        {
+                            ProcEntry proc;
+                            proc.Module = (ushort)module;
+                            proc.OffsetSegment = default; // TODO: get this
+                            proc.ProcSymbolOffset = (uint)recordOffset;
+                            proc.SymKind = symbolKind;
+                            entries.Add(proc);
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+        }
+
+        return new ProcTable(entries.ToArray());
+    }
+
+    #endregion
 }
+
+

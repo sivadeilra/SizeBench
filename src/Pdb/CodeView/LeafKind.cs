@@ -117,3 +117,10 @@ public enum Leaf : ushort {
     LF_UTF8STRING = 0x801b,      // NUL-terminated UTF-8 string
     LF_REAL16 = 0x801c,
 }
+
+public static class LeafExtensions {
+    public static bool IsImmediateNumeric(this Leaf leaf)
+    {
+        return (ushort)leaf < 0x8000u;
+    }
+}
