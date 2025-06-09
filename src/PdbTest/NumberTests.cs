@@ -37,10 +37,23 @@ public sealed class NumberTests
     public void DecodeInt8()
     {
         Bytes b = new(new byte[] { 0, 0x80, 0x80, 0xaa });
-        Assert.IsTrue(Number.Read(ref b, out var num);
+        Assert.IsTrue(Number.Read(ref b, out var num));
         Assert.AreEqual(b.Length, 1);
-
         Assert.IsTrue(num.AsInt32(out var value));
         Assert.AreEqual<int>(value, -128);
+    }
+
+    [TestMethod]
+    public void DecodeUtf8()
+    {
+        Bytes b = new(new byte[] { 0x1b, 0x80, (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', 0, 0x55 });
+        Assert.IsTrue(Number.Read(ref b, out var num));
+        Assert.AreEqual(b.Length, 1);
+        Assert.AreEqual(num.Kind, Leaf.LF_UTF8STRING);
+        Assert.IsTrue(num.AsStringUtf8Bytes(out var span));
+        Assert.AreEqual(span.Length, 5);
+        Assert.AreEqual(span[0], (byte)'H');
+        Assert.IsTrue(num.AsString(out var s));
+        Assert.AreEqual(s, "Hello");
     }
 }

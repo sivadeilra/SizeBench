@@ -35,9 +35,14 @@ public ref struct Number
 
     public static bool Read(ref Bytes b, out Number number)
     {
-        Leaf kind = (Leaf)b.ReadUInt16();
+        if (b.Length < 2)
+        {
+            number = default;
+            return false;
+        }
 
         ReadOnlySpan<byte> originalBytes = b._data;
+        Leaf kind = (Leaf)b.ReadUInt16();
 
         if (kind.IsImmediateNumeric())
         {
@@ -152,6 +157,18 @@ public ref struct Number
         }
     }
 
+    public int AsInt32()
+    {
+        if (AsInt32(out int value))
+        {
+            return value;
+        }
+        else
+        {
+            throw new Exception("Incorrect type");
+        }
+    }
+
     public bool AsUInt32(out uint value)
     {
         Bytes b = new Bytes(this.Data);
@@ -243,6 +260,18 @@ public ref struct Number
         }
     }
 
+    public uint AsUInt32()
+    {
+        if (AsUInt32(out var value))
+        {
+            return value;
+        }
+        else
+        {
+            throw new Exception("Incorrect type");
+        }
+    }
+
     public bool AsStringUtf8Bytes(out ReadOnlySpan<byte> value)
     {
         Bytes b = new Bytes(this.Data);
@@ -272,6 +301,32 @@ public ref struct Number
             default:
                 value = default;
                 return false;
+        }
+    }
+
+    public bool AsString(out string s)
+    {
+        if (AsStringUtf8Bytes(out var bytes))
+        {
+            s = System.Text.Encoding.UTF8.GetString(bytes);
+            return true;
+        }
+        else
+        {
+            s = "";
+            return false;
+        }
+    }
+
+    public string AsString()
+    {
+        if (AsString(out var s))
+        {
+            return s;
+        }
+        else
+        {
+            throw new Exception("Incorrect type");
         }
     }
 }
