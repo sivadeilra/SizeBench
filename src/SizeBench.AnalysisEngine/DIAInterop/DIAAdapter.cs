@@ -3572,6 +3572,19 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
     public uint SymbolRvaFromName(string name, bool preferFunction)
     {
+        uint rvaFromPdb = SymbolRvaFromName_Pdb(name, preferFunction);
+        uint rvaFromDia = SymbolRvaFromName_Dia(name, preferFunction);
+        Debug.Assert(rvaFromPdb == rvaFromDia);
+        return rvaFromPdb;
+    }
+
+    public uint SymbolRvaFromName_Pdb(string name, bool preferFunction)
+    {
+        _pdb.FindGlobalSymbol(name);
+    }
+
+    public uint SymbolRvaFromName_Dia(string name, bool preferFunction)
+    {
         ThrowIfOnWrongThread();
         this.DiaSession.findChildren(this._globalScope, SymTagEnum.SymTagNull, name, (uint)NameSearchOptions.nsfCaseSensitive, out var enumSymbols);
         var symbolsFound = enumSymbols.count;
@@ -3653,6 +3666,8 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
             Marshal.ReleaseComObject(this._diaDataSource);
             this._diaDataSource = null;
         }
+
+        this._pdb.Dispose();
 
         this.IsDisposing = false;
         this.IsDisposed = true;

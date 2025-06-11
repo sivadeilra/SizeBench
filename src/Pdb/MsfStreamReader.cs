@@ -115,6 +115,7 @@ public class MsfStreamReader : IMsfStreamReader {
 
             rest = rest.Slice((int)transferLen);
             totalBytesRead += (int)transferLen;
+            currentStreamOffset += transferLen;
         }
 
         return totalBytesRead;

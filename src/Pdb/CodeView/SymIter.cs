@@ -5,16 +5,16 @@ public ref struct SymIter
 {
     public Bytes _data;
 
-    SymIter(Span<byte> data)
+    SymIter(ReadOnlySpan<byte> data)
     {
         this._data = new Bytes(data);
     }
 
-    public static SymIter ForGlobalSymbols(Span<byte> data) {
+    public static SymIter ForGlobalSymbols(ReadOnlySpan<byte> data) {
         return new SymIter(data);
     }
 
-    public static SymIter ForModuleSymbols(Span<byte> data) {
+    public static SymIter ForModuleSymbols(ReadOnlySpan<byte> data) {
         // Module symbols have a 4-byte prefix, which we ignore.
 
         if (data.Length < 4) {
@@ -22,6 +22,15 @@ public ref struct SymIter
         }
 
         return new SymIter(data.Slice(4));
+    }
+
+    /// <summary>
+    /// Decodes a single record
+    /// </summary>
+    public static bool NextOne(ReadOnlySpan<byte> data, out SymKind kind, out ReadOnlySpan<byte> recordBytes)
+    {
+        SymIter iter = new SymIter(data);
+        return iter.Next(out kind, out recordBytes);
     }
 
     // The format of a symbol record is:

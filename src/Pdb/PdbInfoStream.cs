@@ -51,9 +51,16 @@ internal static class PdbInfoStream
             };
         }
 
-        return new PdbInfo(guid, age, namedStreams);
-    }
+        // After the Named Streams table, there is a list of uint32 values that are "feature codes".
+        int numFeatures = b.Length / 4;
+        uint[] features = new uint[numFeatures];
+        for (int i = 0; i < numFeatures; ++i)
+        {
+            features[i] = b.ReadUInt32();
+        }
 
+        return new PdbInfo(guid, age, namedStreams, features);
+    }
 }
 
 internal sealed class PdbInfo
@@ -61,12 +68,14 @@ internal sealed class PdbInfo
     public Guid Guid;
     public uint Age;
     public NamedStream[] NamedStreams;
+    public uint[] Features;
 
-    public PdbInfo(Guid guid, uint age, NamedStream[] namedStreams)
+    public PdbInfo(Guid guid, uint age, NamedStream[] namedStreams, uint[] features)
     {
         this.Guid = guid;
         this.Age = age;
         this.NamedStreams = namedStreams;
+        this.Features = features;
     }
 
     public int FindNamedStream(string name)
@@ -80,6 +89,18 @@ internal sealed class PdbInfo
         }
 
         return -1;
+    }
+
+    public bool HasFeature(uint f)
+    {
+        foreach (uint ff in this.Features)
+        {
+            if (f == ff)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

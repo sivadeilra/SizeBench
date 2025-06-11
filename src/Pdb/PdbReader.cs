@@ -1,4 +1,5 @@
 using Pdb.CodeView;
+using System.Diagnostics;
 using System;
 using System.IO;
 using System.Reflection;
@@ -56,6 +57,7 @@ public sealed class PdbReader : IDisposable
         // Read the PDB Information Stream (stream 1). This stream is small and nearly always used.
 
         var info = PdbInfoStream.Read(msf);
+
         DbiStreamInfo dbiStreamInfo = new DbiStreamInfo(msf);
 
         // The Modules table is important for many PDB queries and is reasonably small.
@@ -98,6 +100,24 @@ public sealed class PdbReader : IDisposable
     public int FindNamedStream(string name)
     {
         return _info.FindNamedStream(name);
+    }
+
+    public bool HasFeature(uint value)
+    {
+        return _info.HasFeature(value);
+    }
+
+    /// Indicates that this PDB is a "mini PDB", produced by using the `/DEBUG:FASTLINK` parameter.
+    ///
+    /// See: <https://learn.microsoft.com/en-us/cpp/build/reference/debug-generate-debug-info?view=msvc-170>
+    const uint FEATURE_MINI_PDB = 0x494E494Du;
+
+    /// Indicates that this PDB is a "mini PDB", produced by using the `/DEBUG:FASTLINK` parameter.
+    ///
+    /// See: <https://learn.microsoft.com/en-us/cpp/build/reference/debug-generate-debug-info?view=msvc-170>
+    public bool IsFastLink
+    {
+        get { return _info.HasFeature(FEATURE_MINI_PDB); }
     }
 
     public DbiStreamInfo GetDbiStreamInfo()
@@ -397,7 +417,6 @@ public sealed class PdbReader : IDisposable
 
     private ProcTable BuildProcTable()
     {
-
         List<ProcEntry> entries = new List<ProcEntry>();
 
         var modules = GetModules();
@@ -441,6 +460,114 @@ public sealed class PdbReader : IDisposable
     }
 
     #endregion
+
+    SymbolNameTable _globalSymbolIndex;
+
+    public SymbolNameTable GetGlobalSymbolNameTable()
+    {
+        if (_globalSymbolIndex != null)
+        {
+            return _globalSymbolIndex;
+        }
+
+        SymbolNameTable symbolIndex = ReadGlobalSymbolNameTable();
+        _globalSymbolIndex = symbolIndex;
+        return symbolIndex;
+    }
+
+    SymbolNameTable ReadGlobalSymbolNameTable()
+    {
+        if (_dbiStreamInfo.Header.GlobalSymbolIndexStream == MsfDefs.NilStreamIndex16)
+        {
+            return SymbolNameTable.MakeEmpty();
+        }
+
+        bool isFastLink = IsFastLink;
+        return new SymbolNameTable(_msf, _dbiStreamInfo.Header.GlobalSymbolIndexStream, isFastLink);
+    }
+
+    public bool FindGlobalSymbolRefByName(string name, out SymKind kind, out int moduleIndex, out int symbolOffset)
+    {
+        Debug.WriteLine($"FindGlobalSymbolRefByName: {name}");
+
+        // We need the Global Symbol Stream and the Global Symbol Index.
+
+        byte[] globalSymbolsBytes = GetGlobalSymbols();
+        SymbolNameTable globalNameTable = GetGlobalSymbolNameTable();
+
+        Debug.WriteLine($"buckets.length = {globalNameTable.buckets.Length:x08}");
+
+        ReadOnlySpan<uint> offsets = globalNameTable.GetOffsetsForName(name);
+
+        foreach (uint offsetPlusOne in offsets)
+        {
+            int offset = (int)offsetPlusOne - 1;
+            // TODO: range check
+            ReadOnlySpan<byte> symbolsAtOffset = new ReadOnlySpan<byte>(globalSymbolsBytes).Slice(offset);
+            if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
+            {
+                switch (k)
+                {
+                    case SymKind.S_PROCREF:
+                    case SymKind.S_LPROCREF:
+                    case SymKind.S_DATAREF:
+                        {
+                            // RefSym2 header
+                            Bytes b = new Bytes(d);
+                            uint nameChecksum = b.ReadUInt32();
+                            uint thisSymbolOffset = b.ReadUInt32();
+                            ushort thisModuleIndex = b.ReadUInt16();
+
+                            ReadOnlySpan<byte> symbolNameBytes = b.ReadUtf8Bytes();
+                            string symbolNameString = System.Text.Encoding.UTF8.GetString(symbolNameBytes); // TODO: remove!
+
+                            int thisHash = (int)CVHash.hash_mod_u32(symbolNameBytes, (uint)globalNameTable.hashModulus);
+
+                            Debug.WriteLine($"checking symbol: {symbolNameString} - hash {(uint)thisHash:x08}");
+
+                            if (StringIsEqual(name, symbolNameBytes))
+                            {
+                                kind = k;
+                                moduleIndex = thisModuleIndex;
+                                symbolOffset = (int)thisSymbolOffset;
+                                return true;
+                            }
+                        }
+
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+        }
+
+        kind = default;
+        moduleIndex = default;
+        symbolOffset = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Compare two strings for equality. One is stored in UTF-16, the other in UTF-8. This ONLY works for ASCII.
+    /// </summary>
+    // a is ascii, but stored in UTF-16
+    // b is ascii, but stored in UTF-8
+    static bool StringIsEqual(ReadOnlySpan<char> a, ReadOnlySpan<byte> b)
+    {
+        if (a.Length != b.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < a.Length; ++i)
+        {
+            if ((uint)a[i] != (uint)b[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
-
-

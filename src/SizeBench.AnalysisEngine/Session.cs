@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.CompilerServices;
+using Pdb;
 using SizeBench.AnalysisEngine.DebuggerInterop;
 using SizeBench.AnalysisEngine.DIAInterop;
 using SizeBench.AnalysisEngine.Helpers;
@@ -34,6 +35,9 @@ public sealed class Session : ISession
     public IPEFile PEFile => this._peFile!;
 
     private PEFile? _peFile;
+
+    private PdbReader _pdb;
+    public PdbReader Pdb => _pdb!;
 
     #region Progress Reporting
 
@@ -162,6 +166,7 @@ public sealed class Session : ISession
         this._guaranteedLocalPDBFile = new GuaranteedLocalFile(this._originalPDBPathMayBeRemote, initializeDiaThreadLog);
 
         this._diaAdapter = new DIAAdapter(this, this._guaranteedLocalPDBFile.GuaranteedLocalPath);
+        this._pdb = this._diaAdapter.Pdb;
         this._taskParameters = new SessionTaskParameters(this, this._diaAdapter, this.DataCache);
 
         this._peFile = new PEFile(this._originalBinaryPathMayBeRemote, this.SessionOptions.SymbolSourcesSupported, initializeDiaThreadLog);

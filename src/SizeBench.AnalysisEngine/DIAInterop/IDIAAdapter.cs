@@ -38,4 +38,6 @@ internal interface IDIAAdapter
 
     uint? LoadPublicSymbolTargetRVAIfPossible(uint rva);
     List<IMAGE_SECTION_HEADER> FindAllImageSectionHeadersFromPDB(CancellationToken token);
+
+    // Pdb.PdbReader Pdb { get; }
 }
