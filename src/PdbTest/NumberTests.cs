@@ -52,7 +52,7 @@ public sealed class NumberTests
         Assert.AreEqual(num.Kind, Leaf.LF_UTF8STRING);
         Assert.IsTrue(num.AsStringUtf8Bytes(out var span));
         Assert.AreEqual(span.Length, 5);
-        Assert.AreEqual(span[0], (byte)'H');
+        Assert.AreEqual(span.Bytes[0], (byte)'H');
         Assert.IsTrue(num.AsString(out var s));
         Assert.AreEqual(s, "Hello");
     }

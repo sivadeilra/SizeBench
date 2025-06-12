@@ -3580,7 +3580,12 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
     public uint SymbolRvaFromName_Pdb(string name, bool preferFunction)
     {
-        _pdb.FindGlobalSymbol(name);
+        if (_pdb.FindGlobalSymbolRefByName(name, out var kind, out var module, out var symbolOfset))
+        {
+        }
+
+        // fall back
+        return SymbolRvaFromName_Dia(name, preferFunction);
     }
 
     public uint SymbolRvaFromName_Dia(string name, bool preferFunction)

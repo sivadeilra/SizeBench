@@ -272,7 +272,7 @@ public ref struct Number
         }
     }
 
-    public bool AsStringUtf8Bytes(out ReadOnlySpan<byte> value)
+    public bool AsStringUtf8Bytes(out Utf8Span value)
     {
         Bytes b = new Bytes(this.Data);
 
@@ -288,7 +288,7 @@ public ref struct Number
             case Leaf.LF_VARSTRING:
                 {
                     ushort len = b.ReadUInt16();
-                    value = b.ReadN(len);
+                    value = new Utf8Span(b.ReadN(len));
                     return true;
                 }
 
@@ -308,7 +308,7 @@ public ref struct Number
     {
         if (AsStringUtf8Bytes(out var bytes))
         {
-            s = System.Text.Encoding.UTF8.GetString(bytes);
+            s = System.Text.Encoding.UTF8.GetString(bytes.Bytes);
             return true;
         }
         else

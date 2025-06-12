@@ -108,13 +108,9 @@ public sealed class PdbReader : IDisposable
     }
 
     /// Indicates that this PDB is a "mini PDB", produced by using the `/DEBUG:FASTLINK` parameter.
-    ///
-    /// See: <https://learn.microsoft.com/en-us/cpp/build/reference/debug-generate-debug-info?view=msvc-170>
     const uint FEATURE_MINI_PDB = 0x494E494Du;
 
     /// Indicates that this PDB is a "mini PDB", produced by using the `/DEBUG:FASTLINK` parameter.
-    ///
-    /// See: <https://learn.microsoft.com/en-us/cpp/build/reference/debug-generate-debug-info?view=msvc-170>
     public bool IsFastLink
     {
         get { return _info.HasFeature(FEATURE_MINI_PDB); }
@@ -374,6 +370,101 @@ public sealed class PdbReader : IDisposable
 
     #endregion
 
+    #region Section Headers
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SectionHeader
+    {
+        public byte[] NameUtf8;
+        public string Name;
+        public uint VirtualSize;
+        public uint VirtualAddress;
+        public uint SizeOfRawData;
+        public uint PointerToRawData;
+        public uint PointerToRelocations;
+        public uint PointerToLineNumbers;
+        public uint NumberOfRelocations;
+        public uint Characteristics;
+    }
+
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MostlySectionHeader
+    {
+        // public byte[] NameUtf8;
+        public uint VirtualSize;
+        public uint VirtualAddress;
+        public uint SizeOfRawData;
+        public uint PointerToRawData;
+        public uint PointerToRelocations;
+        public uint PointerToLineNumbers;
+        public uint NumberOfRelocations;
+        public uint Characteristics;
+    }
+
+    private SectionHeader[]? _sections;
+
+    public SectionHeader[] GetSections()
+    {
+        if (_sections != null)
+        {
+            return _sections;
+        }
+
+        var sections = ReadSections();
+        _sections = sections;
+        return sections;
+    }
+
+    private SectionHeader[] ReadSections()
+    {
+        int stream = GetOptionalDebugStream(OptionalDebugStream.section_header_data);
+        if (stream == -1)
+        {
+            return Array.Empty<SectionHeader>();
+        }
+
+        const int SectionHeaderSize = 40;
+
+        byte[] sectionsStreamBytes = _msf.GetStreamReader(stream).ReadStreamToArray();
+        int numSections = sectionsStreamBytes.Length / SectionHeaderSize;
+
+        SectionHeader[] sections = new SectionHeader[numSections];
+        for (int i = 0; i < numSections; ++i)
+        {
+            ReadOnlySpan<byte> sectionSpan = new ReadOnlySpan<byte>(sectionsStreamBytes, i * SectionHeaderSize, SectionHeaderSize);
+            Bytes b = new Bytes(sectionSpan);
+            var nameBytes = b.ReadN(8);
+            var mostly = b.ReadT<MostlySectionHeader>();
+
+            int nameLen = nameBytes.Length;
+            for (int j = 0; j < nameBytes.Length; ++j)
+            {
+                nameLen = j;
+                break;
+            }
+            var nameArray = nameBytes.Slice(0, nameLen).ToArray();
+
+            SectionHeader section;
+
+            section.NameUtf8 = nameArray;
+            section.Name = System.Text.Encoding.UTF8.GetString(nameArray);
+            section.VirtualSize = mostly.VirtualSize;
+            section.VirtualAddress = mostly.VirtualAddress;
+            section.SizeOfRawData = mostly.SizeOfRawData;
+            section.PointerToRawData = mostly.PointerToRawData;
+            section.PointerToRelocations = mostly.PointerToRelocations;
+            section.PointerToLineNumbers = mostly.PointerToLineNumbers;
+            section.NumberOfRelocations = mostly.NumberOfRelocations;
+            section.Characteristics = mostly.Characteristics;
+            sections[i] = section;
+        }
+
+        return sections;
+    }
+
+    #endregion
+
     #region Types Database
 
     Types? _types;
@@ -397,7 +488,6 @@ public sealed class PdbReader : IDisposable
     }
 
     #endregion
-
 
     #region Procedure Table
 
@@ -461,21 +551,24 @@ public sealed class PdbReader : IDisposable
 
     #endregion
 
-    SymbolNameTable _globalSymbolIndex;
+    SymbolNameTable? _globalSymbolNameTable;
 
+    /// <summary>
+    /// Gets the Global Symbol Name Table, which can be used for searching for global symbols by name.
+    /// </summary>
     public SymbolNameTable GetGlobalSymbolNameTable()
     {
-        if (_globalSymbolIndex != null)
+        if (_globalSymbolNameTable != null)
         {
-            return _globalSymbolIndex;
+            return _globalSymbolNameTable;
         }
 
         SymbolNameTable symbolIndex = ReadGlobalSymbolNameTable();
-        _globalSymbolIndex = symbolIndex;
+        _globalSymbolNameTable = symbolIndex;
         return symbolIndex;
     }
 
-    SymbolNameTable ReadGlobalSymbolNameTable()
+    private SymbolNameTable ReadGlobalSymbolNameTable()
     {
         if (_dbiStreamInfo.Header.GlobalSymbolIndexStream == MsfDefs.NilStreamIndex16)
         {
@@ -486,24 +579,72 @@ public sealed class PdbReader : IDisposable
         return new SymbolNameTable(_msf, _dbiStreamInfo.Header.GlobalSymbolIndexStream, isFastLink);
     }
 
-    public bool FindGlobalSymbolRefByName(string name, out SymKind kind, out int moduleIndex, out int symbolOffset)
+    SymbolNameTable? _publicSymbolNameTable;
+
+    public SymbolNameTable GetPublicSymbolNameTable()
     {
-        Debug.WriteLine($"FindGlobalSymbolRefByName: {name}");
+        if (_publicSymbolNameTable != null)
+        {
+            return _publicSymbolNameTable;
+        }
 
+        SymbolNameTable nameTable = ReadPublicSymbolNameTable();
+        _publicSymbolNameTable = nameTable;
+        return nameTable;
+    }
+
+    private SymbolNameTable ReadPublicSymbolNameTable()
+    {
+        if (_dbiStreamInfo.Header.PublicSymbolIndexStream == MsfDefs.NilStreamIndex16)
+        {
+            return SymbolNameTable.MakeEmpty();
+        }
+
+        // TODO: Do we actually want IsFastLink when loading the PSI, or only for the GSI?
+        bool isFastLink = IsFastLink;
+        return new SymbolNameTable(_msf, _dbiStreamInfo.Header.PublicSymbolIndexStream, isFastLink);
+    }
+
+    /// <summary>
+    /// Given a symbol name, this searches the Global Symbol Index (GSI) for a "symbol reference" record with that name.
+    /// </summary>
+    /// <remarks>
+    /// If a matching symbol is found, this returns true and returns the module index and the
+    /// byte offset within that module's symbol stream for the symbol. However, this function
+    /// does not look up the symbol data within the given module's stream; the caller must do that.
+    /// </remarks>
+    /// <param name="name"></param>
+    /// <param name="kind"></param>
+    /// <param name="moduleIndex"></param>
+    /// <param name="symbolOffset"></param>
+    /// <returns>True if a matching symbol was found.</returns>
+    public bool FindGlobalSymbolRefByName(ReadOnlySpan<char> name, out SymKind kind, out int moduleIndex, out int symbolOffset)
+    {
         // We need the Global Symbol Stream and the Global Symbol Index.
-
         byte[] globalSymbolsBytes = GetGlobalSymbols();
-        SymbolNameTable globalNameTable = GetGlobalSymbolNameTable();
+        ReadOnlySpan<byte> globalSymbolsSpan = new ReadOnlySpan<byte>(globalSymbolsBytes);
 
-        Debug.WriteLine($"buckets.length = {globalNameTable.buckets.Length:x08}");
+        SymbolNameTable globalNameTable = GetGlobalSymbolNameTable();
 
         ReadOnlySpan<uint> offsets = globalNameTable.GetOffsetsForName(name);
 
         foreach (uint offsetPlusOne in offsets)
         {
+            // This should not happen, but guard against it.
+            if (offsetPlusOne == 0)
+            {
+                continue;
+            }
+
             int offset = (int)offsetPlusOne - 1;
-            // TODO: range check
-            ReadOnlySpan<byte> symbolsAtOffset = new ReadOnlySpan<byte>(globalSymbolsBytes).Slice(offset);
+
+            if (offset > globalSymbolsSpan.Length)
+            {
+                // The offset is invalid. Ignore it.
+                continue;
+            }
+
+            ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsSpan.Slice(offset);
             if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
             {
                 switch (k)
@@ -512,20 +653,15 @@ public sealed class PdbReader : IDisposable
                     case SymKind.S_LPROCREF:
                     case SymKind.S_DATAREF:
                         {
-                            // RefSym2 header
+                            // All of these symbol records have the same structure. They use a REFSYM2 header,
+                            // followed by NUL-terminated symbol name.
                             Bytes b = new Bytes(d);
                             uint nameChecksum = b.ReadUInt32();
                             uint thisSymbolOffset = b.ReadUInt32();
                             ushort thisModuleIndex = b.ReadUInt16();
+                            var thisName = b.ReadUtf8Bytes();
 
-                            ReadOnlySpan<byte> symbolNameBytes = b.ReadUtf8Bytes();
-                            string symbolNameString = System.Text.Encoding.UTF8.GetString(symbolNameBytes); // TODO: remove!
-
-                            int thisHash = (int)CVHash.hash_mod_u32(symbolNameBytes, (uint)globalNameTable.hashModulus);
-
-                            Debug.WriteLine($"checking symbol: {symbolNameString} - hash {(uint)thisHash:x08}");
-
-                            if (StringIsEqual(name, symbolNameBytes))
+                            if (name == thisName)
                             {
                                 kind = k;
                                 moduleIndex = thisModuleIndex;
@@ -533,7 +669,6 @@ public sealed class PdbReader : IDisposable
                                 return true;
                             }
                         }
-
                         break;
 
                     default:
@@ -548,26 +683,29 @@ public sealed class PdbReader : IDisposable
         return false;
     }
 
-    /// <summary>
-    /// Compare two strings for equality. One is stored in UTF-16, the other in UTF-8. This ONLY works for ASCII.
-    /// </summary>
-    // a is ascii, but stored in UTF-16
-    // b is ascii, but stored in UTF-8
-    static bool StringIsEqual(ReadOnlySpan<char> a, ReadOnlySpan<byte> b)
+    Names? _names;
+
+    public Names GetNames()
     {
-        if (a.Length != b.Length)
+        if (_names != null)
         {
-            return false;
+            return _names;
         }
 
-        for (int i = 0; i < a.Length; ++i)
+        var names = ReadNames();
+        _names = names;
+        return names;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private Names ReadNames()
+    {
+        int stream = FindNamedStream("/names");
+        if (stream == MsfDefs.NilStreamIndex16)
         {
-            if ((uint)a[i] != (uint)b[i])
-            {
-                return false;
-            }
+            return Names.MakeEmpty();
         }
 
-        return true;
+        return new Names(_msf, stream);
     }
 }

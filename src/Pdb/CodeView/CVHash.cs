@@ -52,7 +52,7 @@ public static class CVHash
 
         if (b.Length > 0)
         {
-            h ^= (uint)pb[0];
+            h ^= (uint)b._data[0];
         }
 
         h |= 0x20202020;

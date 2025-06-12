@@ -163,6 +163,20 @@ public sealed class Test1
     }
 
     [TestMethod]
+    public void DumpSections()
+    {
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        var sections = pdb.GetSections();
+
+        foreach (var section in sections)
+        {
+            Console.WriteLine($"section: va {section.VirtualAddress:x08} + {section.VirtualSize:x08} : {section.Name}");
+        }
+
+    }
+
+    [TestMethod]
     public void DumpTypes()
     {
         using var pdb = PdbReader.Open(TestPdbPath);
@@ -220,4 +234,21 @@ public sealed class Test1
         }
     }
 
+    [TestMethod]
+    public void DumpNames()
+    {
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        var names = pdb.GetNames();
+
+
+        uint[] nameIndexes = { 0, 10, 20, 30, 40 };
+
+        foreach (uint nameIndex in nameIndexes)
+        {
+            var name = names.GetStringUtf8Bytes((NameIndex)nameIndex);
+            string nameString = name.ToString();
+            Console.WriteLine($"0x{(uint)nameIndex:x08} - {nameString}");
+        }
+    }
 }

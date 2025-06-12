@@ -104,7 +104,7 @@ public ref struct Bytes
         return new Guid(b);
     }
 
-    public ReadOnlySpan<byte> ReadUtf8Bytes()
+    public Utf8Span ReadUtf8Bytes()
     {
         // Find the NUL location.
         for (int i = 0; i < _data.Length; ++i)
@@ -113,7 +113,7 @@ public ref struct Bytes
             {
                 ReadOnlySpan<byte> s = _data.Slice(0, i);
                 _data = _data.Slice(i + 1);
-                return s;
+                return new Utf8Span(s);
             }
         }
 
