@@ -69,15 +69,14 @@ public sealed class SymbolNameTable
     /// (also known as a mini PDB). This is indicated by the presence of the fastlink feature in the PDBI
     /// stream. This feature is obsolete, but we still need to support reading it.
     /// </param>
-    internal SymbolNameTable(MsfReader msf, int stream, bool isFastLink)
+    internal SymbolNameTable(ref IMsfStreamReader stream, long streamOffset, int streamSize, bool isFastLink)
     {
         int numBuckets = isFastLink ? NUM_BUCKETS_MINI : NUM_BUCKETS_NORMAL;
         this._hashModulus = numBuckets;
 
-        var sr = msf.GetStreamReader(stream);
         NameTableHeader header = default;
         Span<byte> headerBytes = MemoryMarshal.AsBytes(new Span<NameTableHeader>(ref header));
-        sr.ReadAtExact(0, headerBytes);
+        stream.ReadAtExact(streamOffset, headerBytes);
 
         if (header.signature != 0xFFFFFFFFu)
         {
@@ -98,7 +97,7 @@ public sealed class SymbolNameTable
 
         NameTableHashRecord[] rawRecords = new NameTableHashRecord[numHashRecords];
         Span<byte> rawRecordsBytes = MemoryMarshal.AsBytes(new Span<NameTableHashRecord>(rawRecords));
-        sr.ReadAtExact(headerBytes.Length, rawRecordsBytes);
+        stream.ReadAtExact(streamOffset + headerBytes.Length, rawRecordsBytes);
 
         uint[] offsets = new uint[rawRecords.Length];
         for (int i = 0; i < offsets.Length; ++i)
@@ -108,7 +107,7 @@ public sealed class SymbolNameTable
 
         // Next, read the hash_buckets data.
         byte[] compressedBuckets = new byte[(int)header.hash_buckets_size];
-        sr.ReadAtExact(headerBytes.Length + rawRecordsBytes.Length, new Span<byte>(compressedBuckets));
+        stream.ReadAtExact(streamOffset + headerBytes.Length + rawRecordsBytes.Length, new Span<byte>(compressedBuckets));
 
         uint[] buckets = ExpandBuckets(compressedBuckets, numBuckets, numHashRecords);
 

@@ -1,8 +1,6 @@
 using Pdb.CodeView;
 using System.Diagnostics;
 using System;
-using System.IO;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -556,53 +554,59 @@ public sealed class PdbReader : IDisposable
     /// <summary>
     /// Gets the Global Symbol Name Table, which can be used for searching for global symbols by name.
     /// </summary>
-    public SymbolNameTable GetGlobalSymbolNameTable()
+    public SymbolNameTable GetGlobalSymbolIndex()
     {
         if (_globalSymbolNameTable != null)
         {
             return _globalSymbolNameTable;
         }
 
-        SymbolNameTable symbolIndex = ReadGlobalSymbolNameTable();
+        SymbolNameTable symbolIndex = ReadGlobalSymbolIndex();
         _globalSymbolNameTable = symbolIndex;
         return symbolIndex;
     }
 
-    private SymbolNameTable ReadGlobalSymbolNameTable()
+    private SymbolNameTable ReadGlobalSymbolIndex()
     {
         if (_dbiStreamInfo.Header.GlobalSymbolIndexStream == MsfDefs.NilStreamIndex16)
         {
             return SymbolNameTable.MakeEmpty();
         }
 
+        var sr = _msf.GetStreamReader(_dbiStreamInfo.Header.GlobalSymbolIndexStream);
         bool isFastLink = IsFastLink;
-        return new SymbolNameTable(_msf, _dbiStreamInfo.Header.GlobalSymbolIndexStream, isFastLink);
+        return new SymbolNameTable(ref sr, 0, (int)sr.StreamSize, isFastLink);
     }
 
-    SymbolNameTable? _publicSymbolNameTable;
+    PublicSymbolIndex? _publicSymbols;
 
-    public SymbolNameTable GetPublicSymbolNameTable()
+    public PublicSymbolIndex GetPublicSymbolIndex()
     {
-        if (_publicSymbolNameTable != null)
+        if (_publicSymbols != null)
         {
-            return _publicSymbolNameTable;
+            return _publicSymbols;
         }
 
-        SymbolNameTable nameTable = ReadPublicSymbolNameTable();
-        _publicSymbolNameTable = nameTable;
+        var nameTable = ReadPublicSymbols();
+        _publicSymbols = nameTable;
         return nameTable;
     }
 
-    private SymbolNameTable ReadPublicSymbolNameTable()
+    // The PSI is similar to the GSI, but has several major differences:
+    //
+    // * The PSI has a header structure (not present in the GSI)
+    // * After the PSI stream header, it contains the same name table that the GSI uses
+    // * After the name table, the PSI contains an address-to-symbol mapping table.
+    private PublicSymbolIndex ReadPublicSymbols()
     {
         if (_dbiStreamInfo.Header.PublicSymbolIndexStream == MsfDefs.NilStreamIndex16)
         {
-            return SymbolNameTable.MakeEmpty();
+            return PublicSymbolIndex.MakeEmpty();
         }
 
         // TODO: Do we actually want IsFastLink when loading the PSI, or only for the GSI?
         bool isFastLink = IsFastLink;
-        return new SymbolNameTable(_msf, _dbiStreamInfo.Header.PublicSymbolIndexStream, isFastLink);
+        return new PublicSymbolIndex(_msf, _dbiStreamInfo.Header.PublicSymbolIndexStream, isFastLink);
     }
 
     /// <summary>
@@ -621,14 +625,10 @@ public sealed class PdbReader : IDisposable
     public bool FindGlobalSymbolRefByName(ReadOnlySpan<char> name, out SymKind kind, out int moduleIndex, out int symbolOffset)
     {
         // We need the Global Symbol Stream and the Global Symbol Index.
-        byte[] globalSymbolsBytes = GetGlobalSymbols();
-        ReadOnlySpan<byte> globalSymbolsSpan = new ReadOnlySpan<byte>(globalSymbolsBytes);
+        ReadOnlySpan<byte> globalSymbolsBytes = GetGlobalSymbols();
+        SymbolNameTable globalSymbolIndex = GetGlobalSymbolIndex();
 
-        SymbolNameTable globalNameTable = GetGlobalSymbolNameTable();
-
-        ReadOnlySpan<uint> offsets = globalNameTable.GetOffsetsForName(name);
-
-        foreach (uint offsetPlusOne in offsets)
+        foreach (uint offsetPlusOne in globalSymbolIndex.GetOffsetsForName(name))
         {
             // This should not happen, but guard against it.
             if (offsetPlusOne == 0)
@@ -638,13 +638,13 @@ public sealed class PdbReader : IDisposable
 
             int offset = (int)offsetPlusOne - 1;
 
-            if (offset > globalSymbolsSpan.Length)
+            if (offset > globalSymbolsBytes.Length)
             {
                 // The offset is invalid. Ignore it.
                 continue;
             }
 
-            ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsSpan.Slice(offset);
+            ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsBytes.Slice(offset);
             if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
             {
                 switch (k)
@@ -658,13 +658,19 @@ public sealed class PdbReader : IDisposable
                             Bytes b = new Bytes(d);
                             uint nameChecksum = b.ReadUInt32();
                             uint thisSymbolOffset = b.ReadUInt32();
-                            ushort thisModuleIndex = b.ReadUInt16();
+                            int thisModuleIndexPlusOne = (int)b.ReadUInt16();
                             var thisName = b.ReadUtf8Bytes();
 
                             if (name == thisName)
                             {
+                                // The module index has a bias of 1.
+                                if (thisModuleIndexPlusOne == 0)
+                                {
+                                    break;
+                                }
+
                                 kind = k;
-                                moduleIndex = thisModuleIndex;
+                                moduleIndex = thisModuleIndexPlusOne - 1;
                                 symbolOffset = (int)thisSymbolOffset;
                                 return true;
                             }
@@ -682,6 +688,65 @@ public sealed class PdbReader : IDisposable
         symbolOffset = default;
         return false;
     }
+
+    // Check for public symbols (S_PUB32).
+    public bool FindPublicSymbolByName(ReadOnlySpan<char> name, out OffsetSegment offsetSegment)
+    {
+        // We need the Global Symbol Stream and the Public Symbol Index.
+        ReadOnlySpan<byte> globalSymbolsBytes = GetGlobalSymbols();
+        var publicSymbolIndex = GetPublicSymbolIndex();
+        var publicSymbolNames = publicSymbolIndex.Names;
+
+        foreach (uint offsetPlusOne in publicSymbolNames.GetOffsetsForName(name))
+        {
+            // This should not happen, but guard against it.
+            if (offsetPlusOne == 0)
+            {
+                continue;
+            }
+
+            int offset = (int)offsetPlusOne - 1;
+
+            if (offset > globalSymbolsBytes.Length)
+            {
+                // The offset is invalid. Ignore it.
+                continue;
+            }
+
+            ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsBytes.Slice(offset);
+            if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
+            {
+                switch (k)
+                {
+                    case SymKind.S_PUB32:
+                        {
+                            // S_PUB32 symbols do not point to a module. The symbol record directly contains
+                            // the OffsetSegment.
+                            Bytes b = new Bytes(d);
+                            uint thisFlags = b.ReadUInt32();
+                            uint thisOffset = b.ReadUInt32();
+                            ushort thisSegment = b.ReadUInt16();
+                            var thisName = b.ReadUtf8Bytes();
+
+                            if (name == thisName)
+                            {
+                                offsetSegment = new OffsetSegment(thisOffset, thisSegment);
+                                return true;
+                            }
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+        }
+
+        offsetSegment = default;
+        return false;
+    }
+
+    #region Names Stream
 
     Names? _names;
 
@@ -707,5 +772,132 @@ public sealed class PdbReader : IDisposable
         }
 
         return new Names(_msf, stream);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Finds a global symbol and returns a pointer to the points at that symbol, within a module stream.
+    /// </summary>
+    /// <remarks>
+    /// This function may load the symbols for a particular module on-demand.
+    /// </remarks>
+    /// <param name="name">The name of the global symbol to find</param>
+    /// <param name="symbolRecords">
+    /// On return, contains a SymIter pointing to the symbol record.
+    /// This SymIter also includes symbol records that follow the initial symbol record. These symbol
+    /// records may or may not be related.
+    /// </param>
+    /// <returns><c>true</c> if the symbol was found.</returns>
+    public bool FindGlobalSymbolRecordByName(ReadOnlySpan<char> name, out SymIter symbolRecords)
+    {
+        if (!FindGlobalSymbolRefByName(name, out var symRefKind, out var module, out var symbolOffset))
+        {
+            symbolRecords = default;
+            return false;
+        }
+
+        byte[] moduleSymbols = GetModuleSymbols(module);
+
+        // symbolRecord points to the absolute position within the module symbols stream.
+        if (symbolOffset > moduleSymbols.Length)
+        {
+            throw new InvalidPdbDataException("Found global symbol, but its record offset extends beyond the range of the containing module's symbol stream.");
+        }
+
+        symbolRecords = SymIter.ForRaw(new ReadOnlySpan<byte>(moduleSymbols).Slice(symbolOffset));
+        return true;
+    }
+
+    public bool FindGlobalSymbolOffsetSegmentName(ReadOnlySpan<char> name, out OffsetSegment offsetSegment)
+    {
+        offsetSegment = default;
+        if (FindGlobalSymbolRecordByName(name, out var symbolRecords))
+        {
+            if (!symbolRecords.Next(out var kind, out var recordBytes))
+            {
+                // If this fails, then the PDB has inconsistent data. This would happen if
+                // a S_PROCREF in the GSS pointed to a bogus location in a module stream.
+                return false;
+            }
+
+            switch (kind)
+            {
+                case SymKind.S_LPROC32:
+                case SymKind.S_GPROC32:
+                    {
+                        var b = new Bytes(recordBytes);
+                        var proc = b.ReadT<SymProcHeader>();
+                        offsetSegment = proc.offset_segment;
+                        return true;
+                    }
+
+                case SymKind.S_LDATA32:
+                case SymKind.S_GDATA32:
+                    {
+                        var b = new Bytes(recordBytes);
+                        var data = b.ReadT<SymDataHeader>();
+                        offsetSegment = data.OffsetSegment;
+                        return true;
+                    }
+
+                default:
+                    // Uh oh, we don't know what kind of symbol this is.
+                    return false;
+            }
+        }
+
+        // Look for S_PUB32 symbols.
+        if (FindPublicSymbolByName(name, out var offSeg))
+        {
+            offsetSegment = offSeg;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Given an <c>OffsetSegment</c>, translates it to an RVA.
+    /// </summary>
+    /// <remarks>
+    /// If the segment or offset or invalid, this will throw an exception.
+    /// </remarks>
+    /// <param name="offsetSegment"></param>
+    /// <returns>The RVA that it was translated to</returns>
+    /// <exception cref="InvalidPdbDataException"></exception>
+    public uint TranslateOffsetSegmentToRva(OffsetSegment offsetSegment)
+    {
+#if nah
+        var sections = GetSectionMap();
+        if (offsetSegment.segment > sections.Entries.Length)
+        {
+            throw new InvalidPdbDataException("Segment value in segment:offset is invalid");
+        }
+
+        ref var section = ref sections.Entries[offsetSegment.segment];
+        uint rva = section.offset + offsetSegment.offset;
+        return rva;
+#else
+        var sections = GetSections();
+
+        // Segment numbers start at 1, not zero.
+        if (offsetSegment.segment == 0 || offsetSegment.segment > sections.Length)
+        {
+            throw new InvalidPdbDataException("Segment value in segment:offset is invalid");
+        }
+        ref var section = ref sections[offsetSegment.segment - 1];
+
+        uint rva = section.VirtualAddress + offsetSegment.offset;
+        return rva;
+#endif
+
+    }
+}
+
+public sealed class InvalidPdbDataException : Exception
+{
+    public InvalidPdbDataException(string message) : base(message)
+    {
     }
 }

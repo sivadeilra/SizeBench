@@ -14,6 +14,12 @@ public struct OffsetSegment
 
     [FieldOffset(4)]
     public ushort segment;
+
+    public OffsetSegment(uint offset, ushort segment)
+    {
+        this.offset = offset;
+        this.segment = segment;
+    }
 }
 
 [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 7)]
@@ -71,7 +77,8 @@ public struct SymProcHeader
 }
 
 [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 18)]
-public struct SymBlockHeader {
+public struct SymBlockHeader
+{
     [FieldOffset(0)]
     public uint p_parent;
 
@@ -84,4 +91,15 @@ public struct SymBlockHeader {
 
     [FieldOffset(12)]
     public OffsetSegment offset_segment;
+}
+
+// Note the jagged ending!  The size (10) is less than the natural alignment.
+[StructLayout(LayoutKind.Explicit, Size = 10)]
+public struct SymDataHeader
+{
+    [FieldOffset(0)]
+    public uint TypeIndex;
+
+    [FieldOffset(4)]
+    public OffsetSegment OffsetSegment;
 }

@@ -3572,20 +3572,42 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
     public uint SymbolRvaFromName(string name, bool preferFunction)
     {
-        uint rvaFromPdb = SymbolRvaFromName_Pdb(name, preferFunction);
         uint rvaFromDia = SymbolRvaFromName_Dia(name, preferFunction);
+
+        uint rvaFromPdb;
+        if (rvaFromDia != 0xffffffffu)
+        {
+            if (!_pdb.FindGlobalSymbolOffsetSegmentName(name, out var offsetSegment))
+            {
+                throw new Exception($"SymbolRvaFromName_Pdb: failed to find name: {name}");
+            }
+
+            rvaFromPdb = _pdb.TranslateOffsetSegmentToRva(offsetSegment);
+        }
+        else
+        {
+            if (_pdb.FindGlobalSymbolOffsetSegmentName(name, out var offsetSegment))
+            {
+                Debug.WriteLine($"SymbolRvaFromName_Pdb: DIA did not find name, but PDB did?!  name: {name}");
+            }
+
+            rvaFromPdb = 0xffffffffu;
+        }
+
         Debug.Assert(rvaFromPdb == rvaFromDia);
         return rvaFromPdb;
     }
 
     public uint SymbolRvaFromName_Pdb(string name, bool preferFunction)
     {
-        if (_pdb.FindGlobalSymbolRefByName(name, out var kind, out var module, out var symbolOfset))
+        if (!_pdb.FindGlobalSymbolOffsetSegmentName(name, out var offsetSegment))
         {
+            Debug.WriteLine($"SymbolRvaFromName_Pdb: failed to find name: {name}");
+            return 0;
         }
 
-        // fall back
-        return SymbolRvaFromName_Dia(name, preferFunction);
+        uint rva = _pdb.TranslateOffsetSegmentToRva(offsetSegment);
+        return rva;
     }
 
     public uint SymbolRvaFromName_Dia(string name, bool preferFunction)

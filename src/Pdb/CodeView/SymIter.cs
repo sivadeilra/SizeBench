@@ -10,18 +10,48 @@ public ref struct SymIter
         this._data = new Bytes(data);
     }
 
-    public static SymIter ForGlobalSymbols(ReadOnlySpan<byte> data) {
+    public static SymIter ForRaw(ReadOnlySpan<byte> data)
+    {
         return new SymIter(data);
     }
 
-    public static SymIter ForModuleSymbols(ReadOnlySpan<byte> data) {
+    public static SymIter ForGlobalSymbols(ReadOnlySpan<byte> data)
+    {
+        return new SymIter(data);
+    }
+
+    public static SymIter ForModuleSymbols(ReadOnlySpan<byte> data)
+    {
         // Module symbols have a 4-byte prefix, which we ignore.
 
-        if (data.Length < 4) {
+        if (data.Length < 4)
+        {
             return new SymIter(Span<byte>.Empty);
         }
 
         return new SymIter(data.Slice(4));
+    }
+
+    /// <summary>
+    /// Skips ahead by <c>n</c> bytes in the input data. This is used for
+    /// seeking to a specific record in a symbol stream.
+    /// </summary>
+    /// <remarks>
+    /// If <c>n</c> is larger than the number of bytes remaining in the
+    /// input data, then this sets the input data span to empty (and does
+    /// not throw an exception).
+    /// </remarks>
+    /// <param name="n">The number of bytes to skip.</param>
+    public void Skip(int n)
+    {
+        if (this._data.Length < n)
+        {
+            this._data._data = new ReadOnlySpan<byte>();
+        }
+        else
+        {
+            this._data._data = this._data._data.Slice(n);
+        }
     }
 
     /// <summary>

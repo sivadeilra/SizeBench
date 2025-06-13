@@ -201,7 +201,7 @@ public sealed class Test1
     public void LoadGlobalSymbolsNameTable()
     {
         using var pdb = PdbReader.Open(TestPdbPath);
-        var names = pdb.GetGlobalSymbolNameTable();
+        var names = pdb.GetGlobalSymbolIndex();
     }
 
     [TestMethod]
@@ -249,6 +249,28 @@ public sealed class Test1
             var name = names.GetStringUtf8Bytes((NameIndex)nameIndex);
             string nameString = name.ToString();
             Console.WriteLine($"0x{(uint)nameIndex:x08} - {nameString}");
+        }
+    }
+
+    [TestMethod]
+    public void GetRvaForSymbol()
+    {
+        string[] names = {
+            "pdbtool::main"
+        };
+
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        foreach (string name in names) {
+            if (!pdb.FindGlobalSymbolOffsetSegmentName(name, out var offsetSegment))
+            {
+                Console.WriteLine($"symbol not found: {name}");
+                continue;
+            }
+
+            uint rva = pdb.TranslateOffsetSegmentToRva(offsetSegment);
+
+            Console.WriteLine($"[{offsetSegment.segment:x04}:{offsetSegment.offset:x08}] - {name}");
         }
     }
 }
