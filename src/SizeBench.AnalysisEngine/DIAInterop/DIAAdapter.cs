@@ -6,6 +6,7 @@ using SizeBench.AnalysisEngine.PE;
 using SizeBench.AnalysisEngine.Symbols;
 using SizeBench.Logging;
 using System.Diagnostics;
+using System.Diagnostics.Contracts;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -124,7 +125,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         }
     }
 
-    public PdbReader Pdb
+    public PdbReader PdbReader
     {
         get { return _pdb; }
     }
@@ -599,7 +600,8 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         // name since we key off the name in so many places.
         var prefixToMerge = String.Empty;
         RawCOFFGroup? pendingRawCG = null;
-        foreach (var coffGroup in this.DiaSession.EnumerateCoffGroupSymbols(peFile, token)
+
+        foreach (var coffGroup in this.PdbReader.EnumerateCoffGroupSymbols(peFile, token)
                                                  .WithCancellation(token)
                                                  .WithLogging(parentLogger, "COFF Groups")
                                                  .OrderBy(cg => cg.RVAStart))
@@ -716,40 +718,58 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
     #region Finding Source Files
 
-    public IEnumerable<SourceFile> FindSourceFiles(ILogger parentLogger, CancellationToken token)
+    /// <summary>
+    /// Finds source files and de-duplicates them, producing the "unique source files list".
+    /// </summary>
+    /// <param name="parentLogger"></param>
+    /// <param name="token"></param>
+    /// <returns></returns>
+    public SourceFile[] FindSourceFiles(ILogger parentLogger, CancellationToken token)
     {
         ThrowIfOnWrongThread();
 
         using var log = parentLogger.StartTaskLog($"Enumerating Source Files");
-        var countOfSourceFilesParsed = 0;
 
-        var sourceFilesByFilename = this._cache!.UnsafeSourceFilesByFilename_UsedOnlyDuringConstruction;
+        var pdb = this.PdbReader;
 
-        foreach (var diaSF in this.DiaSession.EnumerateDiaSourceFiles(parentLogger))
+        Contract.Assert(this.DataCache._compilandsArray != null);
+        Compiland[] compilandsArray = this.DataCache._compilandsArray;
+
+        var sources = pdb.GetSourceFiles();
+
+        var sourcesByName = new Dictionary<string, SourceFile>(StringComparer.InvariantCultureIgnoreCase);
+        var sourcesList = new List<SourceFile>();
+
+        for (int m = 0; m < sources.NumModules; ++m)
         {
-            token.ThrowIfCancellationRequested();
-            countOfSourceFilesParsed++;
+            Compiland compiland = compilandsArray[m];
 
-            // DIA can record two different files with different case, but because we only deal with Windows binaries now
-            // we know that Windows is case-insensitive, so if we find two that match names in this dictionary (which is using
-            // an OrdinalIgnoreCase comparer) we'll merge the two into one SourceFile entity in SizeBench.
-            var diaFilename = diaSF.fileName;
-            if (sourceFilesByFilename.TryGetValue(diaFilename, out var existingSourceFile))
+            ReadOnlySpan<uint> nameOffsets = sources.GetNameOffsetsForModule(m);
+            for (int i = 0; i < nameOffsets.Length; ++i)
             {
-                existingSourceFile.Merge(diaSF.uniqueId, FetchCompilandsFromDiaSourceFile(diaSF));
-            }
-            else
-            {
-                // This has the side-effect of inserting into the dictionary in case we find it again later with a different case.
-                _ = new SourceFile(this.DataCache, diaFilename, diaSF.uniqueId, FetchCompilandsFromDiaSourceFile(diaSF));
+                uint nameIndex = nameOffsets[i];
+                string fileName = sources.GetFileNameString(nameIndex);
+
+                if (sourcesByName.TryGetValue(fileName, out var sourceFile))
+                {
+                    // Found an existing one with the same name. This is quite common, for both
+                    // exact case matches and for case-insensitive matches.
+                }
+                else
+                {
+                    sourceFile = new SourceFile(this.DataCache, fileName, sourcesList.Count, nameIndex);
+                    sourcesByName.Add(fileName, sourceFile);
+                    sourcesList.Add(sourceFile);
+                }
+                sourceFile.AddCompiland(compiland);
             }
         }
 
-        log.Log($"Finished enumerating {countOfSourceFilesParsed:N0} SourceFiles.");
-
-        return this._cache.SourceFilesConstructedEver;
+        log.Log($"Finished enumerating {sourcesList.Count:N0} SourceFiles.");
+        return sourcesList.ToArray();
     }
 
+#if never_gets_used
     private IEnumerable<Compiland> FetchCompilandsFromDiaSourceFile(IDiaSourceFile sourceFile)
     {
         if (this.DataCache.AllCompilands is null)
@@ -776,8 +796,9 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
             }
         }
     }
+#endif
 
-    #endregion
+#endregion
 
     #region Finding RVA ranges with a source file and compiland
 
@@ -785,11 +806,13 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
     {
         ThrowIfOnWrongThread();
 
+        throw new NotImplementedException();
+#if todo
         var ranges = new List<RVARange>();
 
-        foreach (var diaCompilandSymIndexId in compiland.SymIndexIds)
+        // foreach (var diaCompilandSymIndexId in compiland.SymIndexIds)
         {
-            this.DiaSession.symbolById(diaCompilandSymIndexId, out var diaCompiland);
+            // this.DiaSession.symbolById(diaCompilandSymIndexId, out var diaCompiland);
             foreach (var diaFileId in sourceFile.DiaFileIds)
             {
                 this.DiaSession.findFileById(diaFileId, out var diaSourceFile);
@@ -825,9 +848,10 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         }
 
         return RVARangeSet.CoalesceRVARangesFromList(ranges);
+#endif
     }
 
-    #endregion
+#endregion
 
     #region Finding Data Symbols
 
@@ -839,6 +863,34 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         {
             return Array.Empty<StaticDataSymbol>();
         }
+
+        var moduleSymbolsData = this.PdbReader.GetModuleSymbols(compiland.ModuleIndex);
+        var iter = Pdb.CodeView.SymIter.ForModuleSymbols(moduleSymbolsData);
+
+        while (iter.Next(out var sym))
+        {
+            switch (sym.Kind)
+            {
+                case Pdb.CodeView.SymKind.S_LDATA32:
+                    {
+                        var b = sym.B();
+                        Pdb.CodeView.SymDataHeader header = b.ReadT<Pdb.CodeView.SymDataHeader>();
+                        string symbolName = b.ReadUtf8String();
+                        uint rva = this.PdbReader.TranslateOffsetSegmentToRva(header.OffsetSegment);
+                        uint symbolSize = 1; // TODO: unknown
+                        throw new NotImplementedException();
+                        // new StaticDataSymbol(this.DataCache, symbolName, rva, symbolSize, );
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        throw new NotImplementedException();
+
+#if todo
 
         // Usually when enumerating a bunch of symbols there will be hundreds or thousands of them so we'll pre-size capacity to 100 to do less
         // constant reallocations early.
@@ -872,6 +924,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         }
 
         return allSymbols;
+#endif
     }
 
     public IEnumerable<MemberDataSymbol> FindAllMemberDataSymbolsWithinUDT(UserDefinedTypeSymbol udt, CancellationToken cancellationToken)
@@ -907,7 +960,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         return allSymbols;
     }
 
-    #endregion
+#endregion
 
     #region Finding Function Symbols
 
@@ -2050,11 +2103,11 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
             byte[] moduleSymbols = _pdb.GetModuleSymbols(module);
 
             var iter = SymIter.ForModuleSymbols(moduleSymbols);
-            while (iter.Next(out var kind, out var recordBytes))
+            while (iter.Next(out var sym))
             {
-                Bytes rd = new Bytes(recordBytes);
+                Bytes rd = sym.B();
 
-                switch (kind) {
+                switch (sym.Kind) {
                     case SymKind.S_LABEL32:
                         {
                             SymLabelHeader label = rd.ReadT<SymLabelHeader>();
@@ -3406,7 +3459,9 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
                     // It's possible to be unable to get a referencedIn compiland, if the PDB does not contain any compiland information, such
                     // as the PDBs currently produced by lld-link.  So we'll do our best here, but if we can't find one, the DataSymbol will
                     // lack this information.  We did our best.
+#if todo
                     this.DataCache.CompilandsBySymIndexId.TryGetValue(lexicalParent.symIndexId, out referencedIn);
+#endif
                 }
                 else if (parentSymTag == SymTagEnum.SymTagFunction && this.SupportsCodeSymbols)
                 {
@@ -3517,7 +3572,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
         return null;
     }
 
-    #endregion
+#endregion
 
     #region Public Symbols
 
@@ -3559,7 +3614,7 @@ internal sealed class DIAAdapter : IDIAAdapter, IDisposable
 
     #endregion
 
-    #endregion
+#endregion
 
     #region RVA -> Name
 

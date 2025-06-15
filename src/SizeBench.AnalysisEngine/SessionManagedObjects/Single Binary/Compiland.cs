@@ -15,7 +15,15 @@ public sealed class Compiland : IEquatable<Compiland>
 
     private bool _fullyConstructed;
 
-    internal readonly HashSet<uint> SymIndexIds = new HashSet<uint>();
+    /// <summary>
+    /// This is the module index as described in the PDB (not DIA).
+    /// </summary>
+    private readonly int _moduleIndex;
+
+    /// <summary>
+    /// This is the module index as described in the PDB (not DIA).
+    /// </summary>
+    public int ModuleIndex { get { return _moduleIndex; } }
 
     public string Name { get; }
 
@@ -172,11 +180,11 @@ public sealed class Compiland : IEquatable<Compiland>
         }
     }
 
-    internal Compiland(SessionDataCache cache, string name, Library lib, CommandLine commandLine, uint compilandSymIndex)
+    internal Compiland(SessionDataCache cache, string name, Library lib, CommandLine commandLine, int moduleIndex)
     {
         name = String.IsNullOrEmpty(name) ? UnknownName : name;
 
-#if DEBUG
+#if DEBUG && todo
         // Compilands that start with "Import:" are sort of special, since they can exist multiple times in a binary
         // and that's fine.
         // Technically, what maks a Compiland unique is the compilandId, but for most users this is difficult to visually
@@ -192,20 +200,8 @@ public sealed class Compiland : IEquatable<Compiland>
 
         this.Name = name;
         this._commandLine = commandLine;
-        this.SymIndexIds.Add(compilandSymIndex);
         this.Lib = lib;
-
-        cache.RecordCompilandConstructed(this, compilandSymIndex);
-    }
-
-    internal void AddSymIndexId(uint compilandSymIndex)
-    {
-        if (this._fullyConstructed)
-        {
-            throw new ObjectFullyConstructedAlreadyException();
-        }
-
-        this.SymIndexIds.Add(compilandSymIndex);
+        this._moduleIndex = moduleIndex;
     }
 
     internal CompilandSectionContribution GetOrCreateSectionContribution(BinarySection section)

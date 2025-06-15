@@ -42,7 +42,7 @@ public sealed class CompilandDiff
         }
     }
 
-#if DEBUG
+#if DEBUG && todo
     private static bool SymIndexIDListsAreEquivalent(Compiland a, Compiland b)
     {
         foreach (var symIndexId in a.SymIndexIds)
@@ -59,7 +59,7 @@ public sealed class CompilandDiff
 
     internal CompilandDiff(Compiland? before, Compiland? after, LibDiff libDiff, List<BinarySectionDiff> sectionDiffs, DiffSessionDataCache cache)
     {
-#if DEBUG
+#if DEBUG && todo
         // As with (non-diff) Compilands, "Import:<anything>" can be special and appear multiple times in a binary by name.
         // Thus the more complex check here than just the names.
         if (cache.CompilandDiffsConstructedEver.Any(cd =>

@@ -47,14 +47,14 @@ internal class TestDIAAdapter : IDIAAdapter
     }
 
     public IEnumerable<SourceFile>? SourceFilesToFind;
-    public IEnumerable<SourceFile> FindSourceFiles(ILogger parentLogger, CancellationToken token)
+    public SourceFile[] FindSourceFiles(ILogger parentLogger, CancellationToken token)
     {
         if (this.SourceFilesToFind is null)
         {
             throw new InvalidOperationException("Tests should never reach this");
         }
 
-        return this.SourceFilesToFind;
+        return this.SourceFilesToFind.ToArray();
     }
 
     public Dictionary<UserDefinedTypeSymbol, IEnumerable<MemberDataSymbol>> MemberDataSymbolsToFindByUDT = new Dictionary<UserDefinedTypeSymbol, IEnumerable<MemberDataSymbol>>();
@@ -311,4 +311,9 @@ internal class TestDIAAdapter : IDIAAdapter
 
     public List<IMAGE_SECTION_HEADER> FindAllImageSectionHeadersFromPDB(CancellationToken token) 
         => throw new NotImplementedException();
+
+    public Pdb.PdbReader PdbReader
+    {
+        get { throw new NotImplementedException(); }
+    }
 }

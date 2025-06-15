@@ -166,7 +166,7 @@ public sealed class Session : ISession
         this._guaranteedLocalPDBFile = new GuaranteedLocalFile(this._originalPDBPathMayBeRemote, initializeDiaThreadLog);
 
         this._diaAdapter = new DIAAdapter(this, this._guaranteedLocalPDBFile.GuaranteedLocalPath);
-        this._pdb = this._diaAdapter.Pdb;
+        this._pdb = this._diaAdapter.PdbReader;
         this._taskParameters = new SessionTaskParameters(this, this._diaAdapter, this.DataCache);
 
         this._peFile = new PEFile(this._originalBinaryPathMayBeRemote, this.SessionOptions.SymbolSourcesSupported, initializeDiaThreadLog);

@@ -9,7 +9,7 @@ internal interface IDIAAdapter
     IEnumerable<BinarySection> FindBinarySections(IPEFile peFile, ILogger logger, CancellationToken token);
     IEnumerable<COFFGroup> FindCOFFGroups(IPEFile peFile, ILogger logger, CancellationToken token);
     IEnumerable<RawSectionContribution> FindSectionContributions(ILogger logger, CancellationToken token);
-    IEnumerable<SourceFile> FindSourceFiles(ILogger logger, CancellationToken token);
+    SourceFile[] FindSourceFiles(ILogger logger, CancellationToken token);
     IEnumerable<RVARange> FindRVARangesForSourceFileAndCompiland(SourceFile sourceFile, Compiland compiland, CancellationToken token);
     IEnumerable<MemberDataSymbol> FindAllMemberDataSymbolsWithinUDT(UserDefinedTypeSymbol udt, CancellationToken cancellationToken);
     IEnumerable<(uint typeId, uint offset)> FindAllBaseTypeIDsForUDT(UserDefinedTypeSymbol udt);
@@ -39,5 +39,5 @@ internal interface IDIAAdapter
     uint? LoadPublicSymbolTargetRVAIfPossible(uint rva);
     List<IMAGE_SECTION_HEADER> FindAllImageSectionHeadersFromPDB(CancellationToken token);
 
-    // Pdb.PdbReader Pdb { get; }
+    Pdb.PdbReader PdbReader { get; }
 }

@@ -137,5 +137,10 @@ public struct SectionContribEntry {
         this.size = raw.size;
         this.characteristics = raw.characteristics;
     }
+
+    public CodeView.OffsetSegment OffsetSegment
+    {
+        get { return new CodeView.OffsetSegment((uint)this.offset, this.section); }
+    }
 }
 

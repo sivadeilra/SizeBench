@@ -67,6 +67,7 @@ public sealed class Library : IEquatable<Library>
         }
     }
 
+    // TODO: Remove / refactor this.  It is used ONLY in tests now.
     internal Compiland GetOrCreateCompiland(SessionDataCache cache, string compilandName, uint compilandSymIndexId, IDIAAdapter diaAdapter)
     {
         if (this._fullyConstructed)
@@ -81,16 +82,20 @@ public sealed class Library : IEquatable<Library>
 
         if (this._compilands.TryGetValue(compilandName, out var existingCompiland))
         {
-            cache.RecordAdditionalSymIndexIdForCompiland(existingCompiland, compilandSymIndexId);
             return existingCompiland;
         }
 
         var commandLine = diaAdapter.FindCommandLineForCompilandByID(compilandSymIndexId);
 
-        var compiland = new Compiland(cache, compilandName, this, commandLine, compilandSymIndexId);
+        var compiland = new Compiland(cache, compilandName, this, commandLine, this._compilands.Count);
         this._compilands.Add(compilandName, compiland);
 
         return compiland;
+    }
+
+    internal void AddCompiland(Compiland compiland)
+    {
+        _compilands.Add(compiland.Name, compiland);
     }
 
     #endregion

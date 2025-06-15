@@ -15,7 +15,8 @@ public sealed class SourceFile
     private readonly uint _bytesPerWord;
 #endif
 
-    internal readonly List<uint> DiaFileIds = new List<uint>(capacity: 1);
+    internal readonly uint PdbNameIndex;
+    internal readonly int UniqueFileIndex;
 
     public string Name { get; }
 
@@ -177,28 +178,47 @@ public sealed class SourceFile
         }
     }
 
-    internal SourceFile(SessionDataCache cache, string name, uint fileId, IEnumerable<Compiland> compilands)
+    /// <summary>
+    /// Makes a new one!
+    /// </summary>
+    /// <param name="cache"></param>
+    /// <param name="name"></param>
+    /// <param name="uniqueFileIndex">
+    /// This is the index of this SourceFile in the List&lt;SourceFile&gt; that we build during de-duplication
+    /// of source file names. This value is not meaningful to the PdbReader class; instead, it is an index
+    /// into <c>uniqueSourceFiles</c>.
+    /// </param>
+    /// <param name="pdbNameIndex"></param>
+    internal SourceFile(SessionDataCache cache, string name, int uniqueFileIndex, uint pdbNameIndex)
     {
 #if DEBUG
-        if (cache.SourceFilesConstructedEver.Any(sf => sf.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true)
-        {
-            throw new ObjectAlreadyExistsException();
-        }
-
         this._bytesPerWord = cache.BytesPerWord;
 #endif
 
         this.Name = name;
-        this.DiaFileIds.Add(fileId);
-        this._compilands.UnionWith(compilands);
+        this.UniqueFileIndex = uniqueFileIndex;
+        this.PdbNameIndex = pdbNameIndex;
 
         cache.RecordSourceFileConstructed(this);
     }
 
-    internal void Merge(uint diaFileId, IEnumerable<Compiland> compilands)
+    // TODO: This ctor is used only by tests.  Decide what to do with this.
+    internal SourceFile(SessionDataCache cache, string name, uint fileId, List<Compiland> compilands)
     {
-        this.DiaFileIds.Add(diaFileId);
-        this._compilands.UnionWith(compilands);
+#if DEBUG
+        this._bytesPerWord = cache.BytesPerWord;
+#endif
+
+        this.Name = name;
+        this.UniqueFileIndex = (int)fileId;
+        this.PdbNameIndex = ~0u;
+
+        cache.RecordSourceFileConstructed(this);
+    }
+
+    internal void AddCompiland(Compiland compiland)
+    {
+        _compilands.Add(compiland);
     }
 
     internal SourceFileSectionContribution GetOrCreateSectionContribution(BinarySection section)

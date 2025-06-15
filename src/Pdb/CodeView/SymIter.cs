@@ -57,10 +57,10 @@ public ref struct SymIter
     /// <summary>
     /// Decodes a single record
     /// </summary>
-    public static bool NextOne(ReadOnlySpan<byte> data, out SymKind kind, out ReadOnlySpan<byte> recordBytes)
+    public static bool NextOne(ReadOnlySpan<byte> data, out SymRecord sym)
     {
         SymIter iter = new SymIter(data);
-        return iter.Next(out kind, out recordBytes);
+        return iter.Next(out sym);
     }
 
     // The format of a symbol record is:
@@ -68,10 +68,9 @@ public ref struct SymIter
     //      uint16 kind;
     //      uint8 record_data[record_len - 2];
     //
-    public bool Next(out SymKind kind, out ReadOnlySpan<byte> recordBytes)
+    public bool Next(out SymRecord sym)
     {
-        kind = (SymKind)0;
-        recordBytes = Span<byte>.Empty;
+        sym= default;
 
         if (_data._data.Length < 4)
         {
@@ -84,9 +83,9 @@ public ref struct SymIter
             return false;
         }
 
-        kind = (SymKind)_data.ReadUInt16();
-
-        recordBytes = _data.ReadN(recordSize - 2);
+        SymKind kind = (SymKind)_data.ReadUInt16();
+        ReadOnlySpan<byte> recordBytes = _data.ReadN(recordSize - 2);
+        sym = new SymRecord(kind, recordBytes);
 
         return true;
     }

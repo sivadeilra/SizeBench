@@ -14,6 +14,8 @@ public sealed class PdbReader : IDisposable
 
     readonly DbiStreamInfo _dbiStreamInfo;
 
+    #region Modules
+
     /// <summary>
     /// The set of modules loaded from the DBI Stream.
     /// Order is significant, since many data structures refer to modules by index.
@@ -25,6 +27,29 @@ public sealed class PdbReader : IDisposable
         // remember: module symbols start with a 4-byte prefix
         internal byte[]? symbols;
     }
+
+    public const string LinkerModuleName = "* Linker *";
+
+    public int FindModuleIndexByModuleName(string name)
+    {
+        var modules = GetModules();
+        for (int m = 0; m < modules.Length; ++m)
+        {
+            if (modules[m].ModuleName == name)
+            {
+                return m;
+            }
+        }
+
+        return -1;
+    }
+
+    public int FindLinkerModuleIndex()
+    {
+        return FindModuleIndexByModuleName(LinkerModuleName);
+    }
+
+    #endregion
 
     /// <summary>
     /// Indexed by module index.
@@ -438,13 +463,15 @@ public sealed class PdbReader : IDisposable
             int nameLen = nameBytes.Length;
             for (int j = 0; j < nameBytes.Length; ++j)
             {
-                nameLen = j;
-                break;
+                if (nameBytes[j] == 0)
+                {
+                    nameLen = j;
+                    break;
+                }
             }
             var nameArray = nameBytes.Slice(0, nameLen).ToArray();
 
             SectionHeader section;
-
             section.NameUtf8 = nameArray;
             section.Name = System.Text.Encoding.UTF8.GetString(nameArray);
             section.VirtualSize = mostly.VirtualSize;
@@ -519,12 +546,12 @@ public sealed class PdbReader : IDisposable
             while (true)
             {
                 int recordOffset = originalLength - iter._data.Length;
-                if (!iter.Next(out var symbolKind, out var recordData))
+                if (!iter.Next(out var sym))
                 {
                     break;
                 }
 
-                switch (symbolKind)
+                switch (sym.Kind)
                 {
                     case SymKind.S_GPROC32:
                     case SymKind.S_LPROC32:
@@ -533,7 +560,7 @@ public sealed class PdbReader : IDisposable
                             proc.Module = (ushort)module;
                             proc.OffsetSegment = default; // TODO: get this
                             proc.ProcSymbolOffset = (uint)recordOffset;
-                            proc.SymKind = symbolKind;
+                            proc.SymKind = sym.Kind;
                             entries.Add(proc);
                         }
                         break;
@@ -645,9 +672,9 @@ public sealed class PdbReader : IDisposable
             }
 
             ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsBytes.Slice(offset);
-            if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
+            if (SymIter.NextOne(symbolsAtOffset, out var sym))
             {
-                switch (k)
+                switch (sym.Kind)
                 {
                     case SymKind.S_PROCREF:
                     case SymKind.S_LPROCREF:
@@ -655,7 +682,7 @@ public sealed class PdbReader : IDisposable
                         {
                             // All of these symbol records have the same structure. They use a REFSYM2 header,
                             // followed by NUL-terminated symbol name.
-                            Bytes b = new Bytes(d);
+                            Bytes b = new Bytes(sym.Bytes);
                             uint nameChecksum = b.ReadUInt32();
                             uint thisSymbolOffset = b.ReadUInt32();
                             int thisModuleIndexPlusOne = (int)b.ReadUInt16();
@@ -669,7 +696,7 @@ public sealed class PdbReader : IDisposable
                                     break;
                                 }
 
-                                kind = k;
+                                kind = sym.Kind;
                                 moduleIndex = thisModuleIndexPlusOne - 1;
                                 symbolOffset = (int)thisSymbolOffset;
                                 return true;
@@ -714,15 +741,15 @@ public sealed class PdbReader : IDisposable
             }
 
             ReadOnlySpan<byte> symbolsAtOffset = globalSymbolsBytes.Slice(offset);
-            if (SymIter.NextOne(symbolsAtOffset, out var k, out var d))
+            if (SymIter.NextOne(symbolsAtOffset, out var sym))
             {
-                switch (k)
+                switch (sym.Kind)
                 {
                     case SymKind.S_PUB32:
                         {
                             // S_PUB32 symbols do not point to a module. The symbol record directly contains
                             // the OffsetSegment.
-                            Bytes b = new Bytes(d);
+                            Bytes b = new Bytes(sym.Bytes);
                             uint thisFlags = b.ReadUInt32();
                             uint thisOffset = b.ReadUInt32();
                             ushort thisSegment = b.ReadUInt16();
@@ -814,19 +841,19 @@ public sealed class PdbReader : IDisposable
         offsetSegment = default;
         if (FindGlobalSymbolRecordByName(name, out var symbolRecords))
         {
-            if (!symbolRecords.Next(out var kind, out var recordBytes))
+            if (!symbolRecords.Next(out var sym))
             {
                 // If this fails, then the PDB has inconsistent data. This would happen if
                 // a S_PROCREF in the GSS pointed to a bogus location in a module stream.
                 return false;
             }
 
-            switch (kind)
+            switch (sym.Kind)
             {
                 case SymKind.S_LPROC32:
                 case SymKind.S_GPROC32:
                     {
-                        var b = new Bytes(recordBytes);
+                        var b = new Bytes(sym.Bytes);
                         var proc = b.ReadT<SymProcHeader>();
                         offsetSegment = proc.offset_segment;
                         return true;
@@ -835,7 +862,7 @@ public sealed class PdbReader : IDisposable
                 case SymKind.S_LDATA32:
                 case SymKind.S_GDATA32:
                     {
-                        var b = new Bytes(recordBytes);
+                        var b = new Bytes(sym.Bytes);
                         var data = b.ReadT<SymDataHeader>();
                         offsetSegment = data.OffsetSegment;
                         return true;
@@ -892,6 +919,90 @@ public sealed class PdbReader : IDisposable
         return rva;
 #endif
 
+    }
+
+    #region Coff Groups
+
+    CoffGroups? _coffGroups;
+
+    public CoffGroups GetLinkerCoffGroups()
+    {
+        if (_coffGroups != null)
+        {
+            return _coffGroups;
+        }
+
+        var coffGroups = ReadLinkerCoffGroups();
+        _coffGroups = coffGroups;
+        return coffGroups;
+    }
+
+    private CoffGroups ReadLinkerCoffGroups()
+    {
+        int linkerModuleIndex = FindLinkerModuleIndex();
+        if (linkerModuleIndex == -1)
+        {
+            return CoffGroups.MakeEmpty();
+        }
+
+        var coffGroups = new List<CoffGroup>();
+
+        byte[] moduleSymbols = GetModuleSymbols(linkerModuleIndex);
+        SymIter iter = SymIter.ForModuleSymbols(moduleSymbols);
+        while (iter.Next(out var sym))
+        {
+            switch (sym.Kind)
+            {
+                case SymKind.S_COFFGROUP:
+                    {
+                        var group = sym.AsCoffGroup();
+                        CoffGroup g;
+                        g.Size = group.Size;
+                        g.Characteristics = group.Characteristics;
+                        g.OffsetSegment = group.OffsetSegment;
+                        g.Name = group.Name.ToString();
+                        coffGroups.Add(g);
+                        break;
+                    }
+
+#if todo
+                case SymKind.S_SECTION:
+                    {
+                        break;
+                    }
+#endif
+
+                default:
+                    break;
+            }
+        }
+
+        return new CoffGroups(coffGroups.ToArray());
+    }
+
+    #endregion
+}
+
+public struct CoffGroup
+{
+    public uint Size;
+    public uint Characteristics;
+    public OffsetSegment OffsetSegment;
+    public string Name;
+}
+
+public sealed class CoffGroups
+{
+    public readonly CoffGroup[] Groups;
+
+    internal CoffGroups(CoffGroup[] groups)
+    {
+        this.Groups = groups;
+    }
+
+    internal static CoffGroups MakeEmpty()
+    {
+        return new CoffGroups(Array.Empty<CoffGroup>());
     }
 }
 

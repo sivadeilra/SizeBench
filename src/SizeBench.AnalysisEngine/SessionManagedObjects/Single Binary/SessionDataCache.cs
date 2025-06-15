@@ -20,19 +20,13 @@ internal sealed class SessionDataCache : IDisposable
     public IReadOnlyList<COFFGroup> COFFGroupsConstrutedEver
         => this._coffGroupsConstructedEver ?? new List<COFFGroup>();
 
-    public List<Compiland>? _compilandsConstructedEver = new List<Compiland>(capacity: 100);
-    // Note that the same Compiland may appear in this dictionary multiple times, with different SymIndexIds, because
-    // for example we map the null name and the empty string name to "...no name found..." as a single Compiland entity
-    // in SizeBench.
-    private Dictionary<uint, Compiland>? _compilandsBySymIndexId = new Dictionary<uint, Compiland>(capacity: 100);
-    internal IReadOnlyDictionary<uint, Compiland> CompilandsBySymIndexId => this._compilandsBySymIndexId!;
-    public IReadOnlyList<Compiland> CompilandsConstructedEver => this._compilandsConstructedEver ?? new List<Compiland>();
-    public Compiland? FindCompilandBySymIndexId(uint symIndexId)
+    internal Compiland[]? _compilandsArray;
+
+    public Compiland? FindCompilandByModuleIndex(int moduleIndex)
     {
-        if (this._compilandsBySymIndexId is not null &&
-            this._compilandsBySymIndexId.TryGetValue(symIndexId, out var compiland) == true)
+        if (moduleIndex >= 0 && moduleIndex < _compilandsArray!.Length)
         {
-            return compiland;
+            return _compilandsArray[moduleIndex];
         }
         else
         {
@@ -59,22 +53,11 @@ internal sealed class SessionDataCache : IDisposable
         return foundFile;
     }
 
-    internal Dictionary<string, SourceFile> UnsafeSourceFilesByFilename_UsedOnlyDuringConstruction => this._sourceFilesByFilename!;
-
     public void RecordBinarySectionConstructed(BinarySection section)
         => this._binarySectionsConstructedEver!.Add(section);
     public void RecordCOFFGroupConstructed(COFFGroup coffGroup)
         => this._coffGroupsConstructedEver!.Add(coffGroup);
-    public void RecordCompilandConstructed(Compiland compiland, uint symIndexId)
-    {
-        this._compilandsConstructedEver!.Add(compiland);
-        this._compilandsBySymIndexId!.Add(symIndexId, compiland);
-    }
-    public void RecordAdditionalSymIndexIdForCompiland(Compiland compiland, uint additionalSymIndexId)
-    {
-        compiland.AddSymIndexId(additionalSymIndexId);
-        this._compilandsBySymIndexId!.TryAdd(additionalSymIndexId, compiland);
-    }
+
     public void RecordSourceFileConstructed(SourceFile sourceFile)
     {
         this._sourceFilesConstructedEver!.Add(sourceFile);
@@ -227,8 +210,6 @@ internal sealed class SessionDataCache : IDisposable
             // Set large fields to null.
             this._binarySectionsConstructedEver = null;
             this._coffGroupsConstructedEver = null;
-            this._compilandsConstructedEver = null;
-            this._compilandsBySymIndexId = null;
             this._sourceFilesConstructedEver = null;
             this._sourceFilesByFilename = null;
             this._allSymIndexIDsByRVA = null;

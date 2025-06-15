@@ -31,10 +31,63 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
             throw new InvalidOperationException("It is not valid to attempt to enumerate libs and compilands before the PDATA range and symbol RVAs has been established, as that data is necessary to properly attribute PDATA contributions.  This is a bug in SizeBench's implementation, not your usage of it.");
         }
 
+        Pdb.PdbReader pdb = this.DIAAdapter.PdbReader!;
+
+        // Read the set of all compilands ("modules" in PDB parlance) from the PDB.
+        Pdb.ModuleInfo[] modules = pdb.GetModules();
+
         var binarySections = new EnumerateBinarySectionsAndCOFFGroupsSessionTask(this._sessionTaskParameters, this.CancellationToken).Execute(logger);
 
         var libs = new Dictionary<string, Library>(StringComparer.OrdinalIgnoreCase);
-        var compilands = new HashSet<Compiland>(capacity: 1000);
+
+        // Run through the modules and generate the set of unique libraries.
+        // We also produce a linear mapping from module index to library, so that we
+        // can avoid string lookups while processing section contributions.
+        // Section contributions are far more numerous than modules or libraries.
+        Library[] modulesToLibrariesTable = new Library[modules.Length];
+        for (int m = 0; m < modules.Length; ++m)
+        {
+            Pdb.ModuleInfo module = modules[m];
+            if (!libs.TryGetValue(module.ObjectFile, out var lib))
+            {
+                lib = new Library(module.ObjectFile);
+                libs.Add(module.ObjectFile, lib);
+            }
+            modulesToLibrariesTable[m] = lib;
+        }
+
+        // Build a flat array of compilands. Convert PdbReader's idea of module to Compiland.
+        Compiland[] compilandArray = new Compiland[modules.Length];
+        for (int m = 0; m < modules.Length; ++m)
+        {
+            Pdb.ModuleInfo module = modules[m];
+            // We don't yet know the module command-line. Getting that information
+            // is moderately expensive because it requires reading the IPI stream
+            // and parsing an unbounded number of records from it.
+            // TODO: obviously
+            CommandLine commandLine = CompilerCommandLine.FromLanguageAndCompilerName(CompilandLanguage.CV_CFL_RUST, "rustc", Version.Parse("1.0"), Version.Parse("1.0"), "/* TODO */");
+
+            // TODO: For now, we use PdbReader's module index for the compilandSymIndex.
+            Compiland compiland = new Compiland(this.DataCache, module.ModuleName, modulesToLibrariesTable[m], commandLine, m);
+            compilandArray[m] = compiland;
+        }
+
+        // Add each Compiland to its owning Library. Note that Compilands in
+        // compilandArray have the same order as those in the PdbReader modules list,
+        // so we can read from modulesToLibraries.
+        for (int m = 0; m < compilandArray.Length; ++m)
+        {
+            Compiland compiland = compilandArray[m];
+            Library lib = modulesToLibrariesTable[m];
+            lib.AddCompiland(compiland);
+        }
+
+        // Create the HashSet version of the compiland list.
+        var compilands = new HashSet<Compiland>(capacity: compilandArray.Length);
+        foreach (Compiland compiland in compilandArray)
+        {
+            compilands.Add(compiland);
+        }
 
         uint contribsParsed = 0;
         const int loggerOutputVelocity = 100;
@@ -42,24 +95,29 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
 
         using (var parseSectionContributionsLogger = logger.StartTaskLog("Parsing section contributions"))
         {
-            var allSectionContributions = this.DIAAdapter.FindSectionContributions(parseSectionContributionsLogger, this.CancellationToken).ToList();
+            Pdb.SectionContribEntry[] allSectionContributions = pdb.GetSectionContribs()!.Contribs;
 
-            this._totalNumberOfItemsToReportProgressOn = (uint)(allSectionContributions.Count + this.DataCache.PDataSymbolsByRVA.Count);
+            // var allSectionContributions = this.DIAAdapter.FindSectionContributions(parseSectionContributionsLogger, this.CancellationToken).ToList();
+
+            this._totalNumberOfItemsToReportProgressOn = (uint)(allSectionContributions.Length + this.DataCache.PDataSymbolsByRVA.Count);
 
             foreach (var sectionContrib in allSectionContributions)
             {
                 if (contribsParsed >= nextLoggerOutput)
                 {
-                    ReportProgress($"Parsed {contribsParsed:N0}/{allSectionContributions.Count:N0} section contributions.", contribsParsed, this._totalNumberOfItemsToReportProgressOn);
+                    ReportProgress($"Parsed {contribsParsed:N0}/{allSectionContributions.Length:N0} section contributions.", contribsParsed, this._totalNumberOfItemsToReportProgressOn);
                     nextLoggerOutput += loggerOutputVelocity;
                 }
 
-                ParseSectionContrib(sectionContrib, libs, compilands, this.DataCache.AllCOFFGroups!);
+                Compiland compiland = compilandArray[sectionContrib.module_index];
+                Library lib = modulesToLibrariesTable[sectionContrib.module_index];
+
+                ParseSectionContrib(pdb, compiland, lib, in sectionContrib, this.DataCache.AllCOFFGroups!);
                 contribsParsed++;
             }
 
             // One final progress report so the log shows this as "120/120" instead of "100/120" due to the throttling of progress messages in the loop
-            ReportProgress($"Parsed {contribsParsed:N0}/{allSectionContributions.Count:N0} section contributions.", contribsParsed, this._totalNumberOfItemsToReportProgressOn);
+            ReportProgress($"Parsed {contribsParsed:N0}/{allSectionContributions.Length:N0} section contributions.", contribsParsed, this._totalNumberOfItemsToReportProgressOn);
         }
 
         var pdataSection = binarySections.FirstOrDefault(bs => bs.Name == ".pdata");
@@ -89,11 +147,15 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
         return this.DataCache.AllLibs;
     }
 
-    private void ParseSectionContrib(RawSectionContribution sectionContrib,
-                                     Dictionary<string, Library> libs,
-                                     HashSet<Compiland> compilands,
+    private void ParseSectionContrib(
+        Pdb.PdbReader pdb,
+        Compiland compiland,
+        Library lib,
+        in Pdb.SectionContribEntry sectionContrib,
                                      IReadOnlyList<COFFGroup> coffGroups)
     {
+        var offsetSegment = sectionContrib.OffsetSegment;
+        uint sectionContribRva = pdb.TranslateOffsetSegmentToRva(offsetSegment);
 
         // If this RVA range is inside the PDATA region, it is not going to be correct anyway.  There was a bug
         // in the linker prior to VS 2017, where it would generate PDATA section contributions but could not
@@ -102,7 +164,7 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
         //
         // To see how PDATA symbols get correctly attributed to the right compiland/lib, see the code above in
         // ExecuteCore where we do further processing on PDATA regions.
-        if (this.DataCache.PDataRVARange.Contains(sectionContrib.RVA, sectionContrib.Length))
+        if (this.DataCache.PDataRVARange.Contains(sectionContribRva, (uint)sectionContrib.size))
         {
             return;
         }
@@ -111,7 +173,7 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
         for (var i = 0; i < coffGroups.Count; i++)
         {
             var cg = coffGroups[i];
-            if (sectionContrib.RVA >= cg.RVA && sectionContrib.RVA <= (cg.RVA + Math.Max(cg.Size, cg.VirtualSize) - 1))
+            if (sectionContribRva >= cg.RVA && sectionContribRva <= (cg.RVA + Math.Max(cg.Size, cg.VirtualSize) - 1))
             {
                 coffGroup = cg;
                 break;
@@ -127,18 +189,10 @@ internal sealed class EnumerateLibsAndCompilandsSessionTask : SessionTask<HashSe
 
         Debug.Assert(section != null);
 
-        if (!libs.TryGetValue(sectionContrib.LibName, out var lib))
-        {
-            lib = new Library(sectionContrib.LibName);
-            libs.Add(sectionContrib.LibName, lib);
-        }
+        var rvaRange = RVARange.FromRVAAndSize(sectionContribRva, (uint)sectionContrib.size, isVirtualSize: coffGroup.IsVirtualSizeOnly);
 
-        var contributingCompiland = lib.GetOrCreateCompiland(this.DataCache, sectionContrib.CompilandName, sectionContrib.CompilandSymIndexId, this._sessionTaskParameters.DIAAdapter);
-        compilands.Add(contributingCompiland);
-        var rvaRange = RVARange.FromRVAAndSize(sectionContrib.RVA, sectionContrib.Length, isVirtualSize: coffGroup.IsVirtualSizeOnly);
-
-        contributingCompiland.GetOrCreateSectionContribution(section).AddRVARange(rvaRange);
-        contributingCompiland.GetOrCreateCOFFGroupContribution(coffGroup).AddRVARange(rvaRange);
+        compiland.GetOrCreateSectionContribution(section).AddRVARange(rvaRange);
+        compiland.GetOrCreateCOFFGroupContribution(coffGroup).AddRVARange(rvaRange);
     }
 
     private void AttributePDataSymbols(HashSet<Compiland> compilands,

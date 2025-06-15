@@ -121,109 +121,93 @@ internal static class IDiaSessionExtensions
 
     #region Enumerate COFF Groups
 
-    public static IEnumerable<RawCOFFGroup> EnumerateCoffGroupSymbols(this IDiaSession session, IPEFile peFile, CancellationToken token)
+    public static IEnumerable<RawCOFFGroup> EnumerateCoffGroupSymbols(this Pdb.PdbReader pdb, IPEFile peFile, CancellationToken token)
     {
-        session.globalScope.findChildren(SymTagEnum.SymTagCompiland, "* Linker *", 0 /* nsNone */, out var compilandEnum);
+        var coffGroups = pdb.GetLinkerCoffGroups();
 
         var diaCoffGroupRanges = new List<RVARange>(100);
 
-        foreach (IDiaSymbol? compiland in compilandEnum)
+        foreach (var coffGroup in coffGroups.Groups)
         {
             token.ThrowIfCancellationRequested();
 
-            if (compiland is null)
+            // Length of a COFF Group can be 0 legitimately.  An example is ".edata" (export
+            // data), which the linker always creates, but may not have any data in it, depending
+            // on exactly what's being linked in.  We don't want to track 0-length COFF Groups
+            // since they can share an RVA with a "real" (lengthy) COFF Group and that's confusing.
+            if (coffGroup.Size > 0)
             {
-                continue;
-            }
-
-            compiland.findChildren(SymTagEnum.SymTagCoffGroup, null, 0 /* nsNone */, out var coffGroupEnum);
-
-            foreach (IDiaSymbol? coffGroup in coffGroupEnum)
-            {
-                token.ThrowIfCancellationRequested();
-
-                if (coffGroup is null)
-                {
-                    continue;
-                }
-
-                // Length of a COFF Group can be 0 legitimately.  An example is ".edata" (export
-                // data), which the linker always creates, but may not have any data in it, depending
-                // on exactly what's being linked in.  We don't want to track 0-length COFF Groups
-                // since they can share an RVA with a "real" (lengthy) COFF Group and that's confusing.
-                if (coffGroup.length > 0)
-                {
-                    diaCoffGroupRanges.Add(RVARange.FromRVAAndSize(coffGroup.relativeVirtualAddress, (uint)coffGroup.length));
-                    yield return new RawCOFFGroup(coffGroup.name, (uint)coffGroup.length, coffGroup.relativeVirtualAddress, (SectionCharacteristics)coffGroup.characteristics);
-                }
-            }
-
-            var discoveredSet = RVARangeSet.FromListOfRVARanges(diaCoffGroupRanges, maxPaddingToMerge: 8);
-
-            // lld-link sometimes leaves 'holes' between SymTagCoffGroup symbols that can be filled in by PE directories that we have already
-            // parsed, or by certain well-known tables like the .gfids/.giats tables.  We'll synthesize COFF Groups in this case, though arguably
-            // this is a bug in lld-link's PDB generation.
-            foreach (var directory in peFile.PEDirectorySymbols)
-            {
-                var directoryRVARange = RVARange.FromRVAAndSize(directory.RVA, directory.Size);
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(directoryRVARange))
-                {
-                    // We don't know what the characteristics ought to be, so we just won't specify any.
-                    yield return new RawCOFFGroup(directory.COFFGroupFallbackName, directory.Size, directory.RVA, 0);
-                }
-            }
-
-            if (peFile.GFIDSTable != null)
-            {
-                var gfidsRange = RVARange.FromRVAAndSize(peFile.GFIDSTable.RVA, peFile.GFIDSTable.Size);
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(gfidsRange))
-                {
-                    yield return new RawCOFFGroup(".gfids", peFile.GFIDSTable.Size, peFile.GFIDSTable.RVA, 0);
-                }
-            }
-
-            if (peFile.GIATSTable != null)
-            {
-                var giatsRange = RVARange.FromRVAAndSize(peFile.GIATSTable.RVA, peFile.GIATSTable.Size);
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(giatsRange))
-                {
-                    yield return new RawCOFFGroup(".giats", peFile.GIATSTable.Size, peFile.GIATSTable.RVA, 0);
-                }
-            }
-
-            var i = 0;
-            foreach (var importThunksRange in peFile.DelayLoadImportThunksRVARanges)
-            {
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(importThunksRange))
-                {
-                    var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-import-thunks" : $".sizebench-synthesized-delay-load-import-thunks-{i}";
-                    i++;
-                    yield return new RawCOFFGroup(synthesizedName, importThunksRange.Size, importThunksRange.RVAStart, 0);
-                }
-            }
-
-            i = 0;
-            foreach (var importStringsRange in peFile.DelayLoadImportStringsRVARanges)
-            {
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(importStringsRange))
-                {
-                    var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-import-strings" : $".sizebench-synthesized-delay-load-import-strings-{i}";
-                    i++;
-                    yield return new RawCOFFGroup(synthesizedName, importStringsRange.Size, importStringsRange.RVAStart, 0);
-                }
-            }
-
-            i = 0;
-            foreach (var importModuleHandlesRange in peFile.DelayLoadModuleHandlesRVARanges)
-            {
-                if (!discoveredSet.AtLeastPartiallyOverlapsWith(importModuleHandlesRange))
-                {
-                    var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-module-handles" : $".sizebench-synthesized-delay-load-module-handles-{i}";
-                    i++;
-                    yield return new RawCOFFGroup(synthesizedName, importModuleHandlesRange.Size, importModuleHandlesRange.RVAStart, 0);
-                }
+                uint groupRva = pdb.TranslateOffsetSegmentToRva(coffGroup.OffsetSegment);
+                diaCoffGroupRanges.Add(RVARange.FromRVAAndSize(groupRva, coffGroup.Size));
+                yield return new RawCOFFGroup(coffGroup.Name, coffGroup.Size, groupRva, (SectionCharacteristics)coffGroup.Characteristics);
             }
         }
+
+        var discoveredSet = RVARangeSet.FromListOfRVARanges(diaCoffGroupRanges, maxPaddingToMerge: 8);
+
+        // lld-link sometimes leaves 'holes' between SymTagCoffGroup symbols that can be filled in by PE directories that we have already
+        // parsed, or by certain well-known tables like the .gfids/.giats tables.  We'll synthesize COFF Groups in this case, though arguably
+        // this is a bug in lld-link's PDB generation.
+        foreach (var directory in peFile.PEDirectorySymbols)
+        {
+            var directoryRVARange = RVARange.FromRVAAndSize(directory.RVA, directory.Size);
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(directoryRVARange))
+            {
+                // We don't know what the characteristics ought to be, so we just won't specify any.
+                yield return new RawCOFFGroup(directory.COFFGroupFallbackName, directory.Size, directory.RVA, 0);
+            }
+        }
+
+        if (peFile.GFIDSTable != null)
+        {
+            var gfidsRange = RVARange.FromRVAAndSize(peFile.GFIDSTable.RVA, peFile.GFIDSTable.Size);
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(gfidsRange))
+            {
+                yield return new RawCOFFGroup(".gfids", peFile.GFIDSTable.Size, peFile.GFIDSTable.RVA, 0);
+            }
+        }
+
+        if (peFile.GIATSTable != null)
+        {
+            var giatsRange = RVARange.FromRVAAndSize(peFile.GIATSTable.RVA, peFile.GIATSTable.Size);
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(giatsRange))
+            {
+                yield return new RawCOFFGroup(".giats", peFile.GIATSTable.Size, peFile.GIATSTable.RVA, 0);
+            }
+        }
+
+        var i = 0;
+        foreach (var importThunksRange in peFile.DelayLoadImportThunksRVARanges)
+        {
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(importThunksRange))
+            {
+                var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-import-thunks" : $".sizebench-synthesized-delay-load-import-thunks-{i}";
+                i++;
+                yield return new RawCOFFGroup(synthesizedName, importThunksRange.Size, importThunksRange.RVAStart, 0);
+            }
+        }
+
+        i = 0;
+        foreach (var importStringsRange in peFile.DelayLoadImportStringsRVARanges)
+        {
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(importStringsRange))
+            {
+                var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-import-strings" : $".sizebench-synthesized-delay-load-import-strings-{i}";
+                i++;
+                yield return new RawCOFFGroup(synthesizedName, importStringsRange.Size, importStringsRange.RVAStart, 0);
+            }
+        }
+
+        i = 0;
+        foreach (var importModuleHandlesRange in peFile.DelayLoadModuleHandlesRVARanges)
+        {
+            if (!discoveredSet.AtLeastPartiallyOverlapsWith(importModuleHandlesRange))
+            {
+                var synthesizedName = i == 0 ? ".sizebench-synthesized-delay-load-module-handles" : $".sizebench-synthesized-delay-load-module-handles-{i}";
+                i++;
+                yield return new RawCOFFGroup(synthesizedName, importModuleHandlesRange.Size, importModuleHandlesRange.RVAStart, 0);
+            }
+        }        
     }
 
     #endregion

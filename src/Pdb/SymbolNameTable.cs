@@ -62,7 +62,6 @@ public sealed class SymbolNameTable
     /// <summary>
     /// Reads and decodes a symbol name table from an MSF file. This is used for the GSI and PSI.
     /// </summary>
-    /// <param name="msf"></param>
     /// <param name="stream"></param>
     /// <param name="isFastLink">
     /// The caller must indicate whether this <c>SymbolNameTable</c> was encoded for a "fastlink PDB"

@@ -1,5 +1,8 @@
 ﻿namespace Pdb;
 
+#pragma warning disable 0660
+#pragma warning disable 0661
+
 public ref struct Utf8Span
 {
     public ReadOnlySpan<byte> Bytes;

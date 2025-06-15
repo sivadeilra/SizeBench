@@ -1,10 +1,12 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Diagnostics;
+using System.Diagnostics.Contracts;
+using System.Runtime.InteropServices;
 
 namespace Pdb.CodeView;
 
 using TypeIndex = uint;
 
-[StructLayout(LayoutKind.Explicit, Pack = 1, Size = 6)]
+[StructLayout(LayoutKind.Explicit, Size = 6)]
 public struct OffsetSegment
 {
     public const int SizeOf = 6;
@@ -19,6 +21,11 @@ public struct OffsetSegment
     {
         this.offset = offset;
         this.segment = segment;
+    }
+
+    public override string ToString()
+    {
+        return $"[{segment:x04}:{offset:x08}]";
     }
 }
 
@@ -102,4 +109,67 @@ public struct SymDataHeader
 
     [FieldOffset(4)]
     public OffsetSegment OffsetSegment;
+}
+
+/// <summary>
+/// A symbol record, with a <c>kind</c> that identifies it and a poiner to the
+/// uninterpreted bytes.
+/// </summary>
+/// <remarks>
+/// This type provides methods for interpreting the record bytes.
+/// </remarks>
+public ref struct SymRecord
+{
+    public SymKind Kind;
+    public ReadOnlySpan<byte> Bytes;
+
+    public Bytes B() {
+        return new Bytes(this.Bytes);
+    }
+
+    public SymRecord(SymKind kind, ReadOnlySpan<byte> bytes)
+    {
+        this.Kind = kind;
+        this.Bytes = bytes;
+    }
+
+    public SymCoffGroup AsCoffGroup()
+    {
+        Contract.Assert(this.Kind == SymKind.S_COFFGROUP);
+
+        var b = B();
+        var header = b.ReadT<SymCoffGroupHeader>();
+        var name = b.ReadUtf8Bytes();
+
+        SymCoffGroup sym;
+        sym.Size = header.Size;
+        sym.Characteristics = header.Characteristics;
+        sym.OffsetSegment = header.OffsetSegment;
+        sym.Name = name;
+        return sym;
+    }
+}
+
+/// <summary>
+/// Interpreted value of S_COFFGROUP
+/// </summary>
+/// <remarks>
+/// S_COFFGROUP is only found in the "* Linker *" pseudo-module.
+/// </remarks>
+public ref struct SymCoffGroup
+{
+    public uint Size;
+    public uint Characteristics;
+    public OffsetSegment OffsetSegment;
+    public Utf8Span Name;
+}
+
+[StructLayout(LayoutKind.Sequential, Size = 14)]
+public struct SymCoffGroupHeader
+{
+    public uint Size;
+    public uint Characteristics;
+    public OffsetSegment OffsetSegment;
+    // char name[];
+    // <-- Note unaligned end of struct
 }

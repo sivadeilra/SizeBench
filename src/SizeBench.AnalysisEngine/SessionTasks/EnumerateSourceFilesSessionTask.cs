@@ -45,14 +45,7 @@ internal sealed class EnumerateSourceFilesSessionTask : SessionTask<List<SourceF
 
             // Perf optimization - the product code will return this as a List<SourceFile> but we leave it as IEnumerable<SourceFile> to allow
             // for tests to simulate canceling in the middle of enumeration.
-            if (foundSourceFiles is List<SourceFile> foundListOfSourceFiles)
-            {
-                sourceFiles = foundListOfSourceFiles;
-            }
-            else
-            {
-                sourceFiles = foundSourceFiles.ToList();
-            }
+            sourceFiles = new List<SourceFile>(foundSourceFiles);
 
             this._totalNumberOfItemsToReportProgressOn = (uint)(sourceFiles.Count + this.DataCache.PDataSymbolsByRVA.Count + this.DataCache.XDataSymbolsByRVA.Count);
 

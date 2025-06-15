@@ -44,9 +44,9 @@ public sealed class Test1
         // Read symbols for some module
         byte[] moduleSymbols = pdb.GetModuleSymbols(1);
         var iter = SymIter.ForModuleSymbols(moduleSymbols);
-        while (iter.Next(out var kind, out var recordData))
+        while (iter.Next(out var sym))
         {
-            Console.WriteLine($"symbol: {kind} len {recordData.Length}");
+            Console.WriteLine($"symbol: {sym.Kind} len {sym.Bytes.Length}");
         }
     }
 
@@ -58,9 +58,9 @@ public sealed class Test1
 
         byte[] globalSymbols = pdb.GetGlobalSymbols();
         var iter = SymIter.ForGlobalSymbols(globalSymbols);
-        while (iter.Next(out var kind, out var recordData))
+        while (iter.Next(out var sym))
         {
-            Console.WriteLine($"symbol: {kind} len {recordData.Length}");
+            Console.WriteLine($"symbol: {sym.Kind} len {sym.Bytes.Length}");
         }
     }
 
@@ -270,7 +270,20 @@ public sealed class Test1
 
             uint rva = pdb.TranslateOffsetSegmentToRva(offsetSegment);
 
-            Console.WriteLine($"[{offsetSegment.segment:x04}:{offsetSegment.offset:x08}] - {name}");
+            Console.WriteLine($"{offsetSegment} - {name}");
+        }
+    }
+
+    [TestMethod]
+    public void DumpCoffGroups()
+    {
+        using var pdb = PdbReader.Open(TestPdbPath);
+
+        var coffGroups = pdb.GetLinkerCoffGroups();
+
+        foreach (var group in coffGroups.Groups)
+        {
+            Console.WriteLine($"{group.OffsetSegment} + 0x{group.Size:x08} : flags 0x{group.Characteristics:x08} - {group.Name}");
         }
     }
 }
